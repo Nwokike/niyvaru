@@ -84,7 +84,7 @@ function addPoiLayers(map: maplibregl.Map) {
       "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
       "text-size": 11,
       "text-offset": [0, 1.1],
-      "text-font": ["Open Sans Regular"],
+      "text-font": ["Noto Sans Regular"],
     },
     paint: { "text-color": "#e6e8ef", "text-halo-color": "#0b1020", "text-halo-width": 1.2 },
   });

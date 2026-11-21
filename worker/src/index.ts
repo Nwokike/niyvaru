@@ -1,5 +1,5 @@
-import { buildSystemPrompt, buildChatMessages, areaFacts } from "../../shared/prompt";
-import { profileToText } from "../../shared/profile";
+import { buildSystemPrompt, buildChatMessages, areaFacts } from "../../shared/prompt.ts";
+import { profileToText } from "../../shared/profile.ts";
 
 interface Env {
   GATEWAY_SECRET?: string;

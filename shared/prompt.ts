@@ -1,4 +1,4 @@
-import { areaFacts } from "./facts";
+import { areaFacts } from "./facts.ts";
 
 export const SYSTEM_PROMPT = `You are Niyvaru, a grounded travel companion for Makkah al-Mukarramah.
 

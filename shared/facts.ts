@@ -1,4 +1,4 @@
-import type { AreaSummary, Poi } from "../src/types";
+import type { AreaSummary, Poi } from "../src/types.ts";
 
 function haversineM(a: [number, number], b: [number, number]): number {
   const R = 6371000;
@@ -49,6 +49,7 @@ export function areaFacts(area: AreaSummary): string {
   for (const p of top) {
     const t = p.tags || {};
     const bits = [
+      `[${p.id}]`,
       p.name_en || p.name,
       KIND_LABEL[p.kind] || p.kind,
       `${p.distance_m ?? "?"}m`,

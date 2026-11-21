@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "data": "node data/build-data.mjs",
     "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "api:dev": "node scripts/dev-api.mjs",
     "worker:deploy": "wrangler deploy --config worker/wrangler.toml"
   },
   "dependencies": {
@@ -24,6 +25,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "adhan": "^4.4.3",
     "typescript": "^5.9.0",
-    "vite": "^7.1.0"
+    "vite": "^7.1.0",
+    "wrangler": "^4.166.0"
   }
 }

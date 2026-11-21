@@ -1,10 +1,21 @@
 import type { AgentAction, AreaSummary, ChatMessage, Profile } from "./types";
 import { memoryExtractionPrompt, profileToText } from "./memory";
+import { sanitizeProfile } from "../shared/profile";
 
 export interface ChatResult {
   text: string;
   actions: AgentAction[];
   model: string;
+}
+
+function isActionLine(line: string): boolean {
+  const t = line.trim();
+  if (!t.startsWith("{") || !t.endsWith("}")) return false;
+  try {
+    return typeof JSON.parse(t).action === "string";
+  } catch {
+    return false;
+  }
 }
 
 function parseActions(text: string): AgentAction[] {
@@ -18,11 +29,26 @@ function parseActions(text: string): AgentAction[] {
       /* ignore malformed action blocks */
     }
   }
+  // Free models often emit bare JSON lines instead of the tagged form.
+  for (const line of text.split("\n")) {
+    if (!isActionLine(line)) continue;
+    try {
+      const a = JSON.parse(line.trim()) as AgentAction;
+      if (!out.some((x) => JSON.stringify(x) === JSON.stringify(a))) out.push(a);
+    } catch {
+      /* ignore */
+    }
+  }
   return out;
 }
 
 function stripActionBlocks(text: string): string {
-  return text.replace(/<niyvaru>[\s\S]*?<\/niyvaru>/g, "").trim();
+  return text
+    .replace(/<niyvaru>[\s\S]*?<\/niyvaru>/g, "")
+    .split("\n")
+    .filter((line) => !isActionLine(line))
+    .join("\n")
+    .trim();
 }
 
 async function readSse(res: Response, onToken: (t: string) => void): Promise<string> {
@@ -102,8 +128,21 @@ export async function extractMemory(history: ChatMessage[], profile: Profile): P
     body: JSON.stringify({ history: history.slice(-6), profile, prompt: memoryExtractionPrompt(history.slice(-6), profile) }),
   });
   if (!res.ok) return profile;
-  const data = (await res.json()) as Profile;
-  return { ...profile, ...data, version: 1 };
+  const data = (await res.json()) as Record<string, unknown>;
+  const incoming = sanitizeProfile(data);
+  // Preserve existing values when the model returns nothing new for a field.
+  return {
+    ...profile,
+    name: incoming.name ?? profile.name,
+    mobility: incoming.mobility ?? profile.mobility,
+    budget_usd_per_night: incoming.budget_usd_per_night ?? profile.budget_usd_per_night,
+    preferences: incoming.preferences.length ? incoming.preferences : profile.preferences,
+    constraints: incoming.constraints.length ? incoming.constraints : profile.constraints,
+    interests: incoming.interests.length ? incoming.interests : profile.interests,
+    notes: incoming.notes.length ? incoming.notes : profile.notes,
+    home_area: incoming.home_area ?? profile.home_area,
+    updated_at: new Date().toISOString(),
+  };
 }
 
 export { profileToText };

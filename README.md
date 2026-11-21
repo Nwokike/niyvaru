@@ -53,6 +53,12 @@ npm run worker:dev                               # http://127.0.0.1:8787
 npm run dev                                      # http://127.0.0.1:5173
 ```
 
+If `wrangler dev` cannot start (e.g. Alpine/musl, where workerd's glibc binary
+won't run), use `npm run api:dev` instead — it imports the **same** worker
+handler in plain Node. For a quick local test, the Asase family key in Asase's
+public `src/core/constants.py` is a valid gateway secret; production should set
+its own via `wrangler secret put GATEWAY_SECRET`.
+
 Without `GATEWAY_SECRET` the map, packs, walks and memory still work; chat
 returns a clear configuration error.
 
