@@ -1,0 +1,4 @@
+# Copy to worker/.dev.vars (gitignored) and fill in the Kiri Gateway family key.
+# The same value is set as a Cloudflare Worker secret with:
+#   npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml
+GATEWAY_SECRET=replace-with-your-kiri-gateway-secret

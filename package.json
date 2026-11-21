@@ -1,0 +1,29 @@
+{
+  "name": "niyvaru",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "data": "node data/build-data.mjs",
+    "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.toml"
+  },
+  "dependencies": {
+    "maplibre-gl": "^6.19.0",
+    "pmtiles": "^4.4.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "adhan": "^4.4.3",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}

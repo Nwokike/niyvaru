@@ -1,0 +1,10 @@
+name = "niyvaru-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-21"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+GATEWAY_URL = "https://api.kiri.ng"
+
+[observability]
+enabled = true

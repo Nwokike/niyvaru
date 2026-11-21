@@ -1,0 +1,16 @@
+{
+  "version": "2026-11-21",
+  "generated_at": "2026-11-21T13:23:30.561Z",
+  "areas": [
+    {
+      "id": "makkah-haram",
+      "name": "Makkah — Haram",
+      "center": [
+        21.4225,
+        39.8262
+      ],
+      "radius_m": 2000,
+      "file": "makkah-haram.json"
+    }
+  ]
+}

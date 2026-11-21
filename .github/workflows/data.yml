@@ -1,0 +1,33 @@
+name: data-pack
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily, off the hour
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["data/**"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install
+      - run: npm run data
+      - name: Commit refreshed packs
+        run: |
+          git config user.name "niyvaru-bot"
+          git config user.email "bot@niyvaru.local"
+          git add public/packs
+          if git diff --cached --quiet; then
+            echo "no pack changes"
+          else
+            git commit -m "data: refresh Makkah pack $(date -u +%F)"
+            git push
+          fi
