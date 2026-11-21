@@ -2,8 +2,9 @@
 
 ## One-sentence version
 
-A static web app renders a real map from versioned JSON packs; one free Cloudflare
-Worker proxies an AI gateway; the traveller's memory stays in the browser.
+A static web app renders a real map from versioned JSON packs; chat calls the
+AI gateway directly from the browser; the traveller's memory stays in the
+browser. A Cloudflare Worker is available as an optional server-side mode.
 
 ## Components
 
@@ -14,31 +15,29 @@ Worker proxies an AI gateway; the traveller's memory stays in the browser.
 | Packs (`public/packs/`) | JSON files | area facts: POIs, routes, Panoramax frames, prayer, weather, events |
 | Cache | IndexedDB (`niyvaru`, store `packs`) | downloaded area packs, versioned |
 | Client memory | `localStorage` | profile, last 12 chat messages, local posts |
-| API (`worker/`) | Cloudflare Worker | `/api/health`, `/api/chat`, `/api/memory` |
+| API (`worker/`, optional) | Cloudflare Worker | `/api/health`, `/api/chat`, `/api/memory` |
 | AI | Kiri Gateway (`api.kiri.ng/chat`) | free text inference, SSE |
 | Data job (`data/`, GitHub Actions) | Node 24 | daily regeneration of packs |
-| Hosting | Cloudflare Pages + Workers (free) | static CDN + API route |
+| Hosting | GitHub Pages (primary), Cloudflare Pages (optional) | static CDN; optional API route |
 
 ## Request flow
 
 ```
 [Browser]
   index.json -> pack download (IndexedDB cache)
-  |-- GET  /api/health            -> Worker -> { ok, gateway }
-  |-- POST /api/chat { text, history, profile, area }
-  |          -> Worker -> build grounded system prompt
-  |          -> Kiri Gateway /chat (task_type:text, stream:true)
+  |-- chat: build grounded prompt from shared/ + area pack + client memory
+  |          -> Kiri Gateway /chat (direct, task_type:text, stream:true)
   |          <- SSE -> browser renders tokens
   |          <- <niyvaru> actions -> map.focus / highlight / route / walk
-  |-- POST /api/memory { history, profile, prompt }
-             -> Worker -> Gateway (no stream) -> JSON facts -> sanitised -> localStorage
+  |-- memory: Gateway (no stream) -> JSON facts -> sanitised -> localStorage
+
+  If VITE_API_BASE is set, the two gateway calls go through the Worker instead.
 ```
 
 ## Design decisions and why
 
 1. **Static-first.** Tiles, POIs, routes, frames and the AI prompt are files on
-   a CDN. If the Worker hits its free-plan request limit, the map and walks
-   still work. Only chat and memory need the Worker.
+   a CDN. No backend is required for the product to work.
 2. **No database.** Posts and memory are device-local. This keeps the prototype
    at $0 and avoids a shared-data surface before the product is validated.
    A production social layer will need a real store; none of the current code
@@ -53,9 +52,8 @@ Worker proxies an AI gateway; the traveller's memory stays in the browser.
 5. **Client-side memory.** Long-term facts never leave the device. Each request
    re-assembles a small context, which is why the gateway's completion cap is
    not a context problem.
-6. **OpenAI-wire interface only.** The Worker talks the standard chat format;
-   changing from Kiri Gateway to a local model is a base-URL change plus an
-   auth adjustment, not a rewrite.
+6. **OpenAI-wire interface only.** Both modes use the standard chat format;
+   changing the provider is a base-URL change, not a rewrite.
 
 ## State ownership
 
