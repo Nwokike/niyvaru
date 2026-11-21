@@ -89,6 +89,7 @@ body {
 .feed, .ops { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .card { background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
 .card h3 { margin: 0 0 8px; font-size: 14px; }
+.card input { width: 100%; }
 .card p { margin: 4px 0; font-size: 13px; }
 .muted { color: var(--muted); font-size: 12px; }
 .post-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }

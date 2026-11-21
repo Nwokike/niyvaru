@@ -5,8 +5,9 @@
 Kiri Router is local-only: `POST https://router.kiri.ng/v1/chat/completions`
 returns `cloud_chat_disabled`; inference runs at `http://127.0.0.1:8082/v1` on
 the device whose IP is allowed. A hosted web app cannot reach a visitor's
-localhost, so the prototype uses **Kiri Gateway** through the Worker. The
-Worker only depends on the OpenAI chat wire format, so the provider is swappable.
+localhost, so the prototype calls **Kiri Gateway** directly from the browser
+(verified CORS: `access-control-allow-origin: *` for `https://nwokike.github.io`).
+A server-side Worker mode is also available. Both use the OpenAI chat wire format.
 
 ## Gateway contract used
 
@@ -23,20 +24,21 @@ Worker only depends on the OpenAI chat wire format, so the provider is swappable
 }
 ```
 
-Headers: `Content-Type: application/json`, `Authorization: Bearer <GATEWAY_SECRET>`.
+Headers: `Content-Type: application/json`, `Authorization: Bearer <family app credential>`
+(the same value Asase and akili-app ship; set at build time with `VITE_GATEWAY_KEY`).
 
 The gateway's family roster (in `Nwokike/kiri-gateway/index.js`) tries Groq
 qwen3.8-27b → qwen3.6-27b → gpt-oss-120b → gpt-oss-20b → NVIDIA
 diffusiongemma → nemotron variants, with per-model timeouts, SSE passthrough
-and `_model_used` tagging. The Worker simply forwards the upstream SSE as
-`text/event-stream` with CORS headers.
+and `_model_used` tagging. In direct mode the browser reads the SSE stream; in
+Worker mode the Worker forwards it as `text/event-stream` with CORS headers.
 
 **The "4K/8K context" worry:** the `6144` in the gateway roster is
 `max_completion_tokens`, not a context-window cap. Our context problem is
 solved by construction: each request sends a compact area summary plus the
 profile and last 8 messages, not the whole pack or the full history.
 
-## Worker API
+## Optional Worker API (only when `VITE_API_BASE` is set)
 
 | Route | Request | Response |
 |---|---|---|
@@ -95,8 +97,8 @@ Keys in `localStorage`:
 | `niyvaru.chat.v1` | last 12 messages |
 | `niyvaru.posts.v1` | local feed posts |
 
-After each answer, `extractMemory()` calls `/api/memory` with a prompt that asks
-for JSON only. `shared/profile.ts` `sanitizeProfile()` coerces model output:
+After each answer, `extractMemory()` calls the gateway (direct mode) or
+`/api/memory` (Worker mode) with a prompt that asks for JSON only. `shared/profile.ts` `sanitizeProfile()` coerces model output:
 unknown mobility values become `undefined`, non-positive budgets are dropped,
 arrays are filtered to strings. Existing values are preserved when the model
 returns nothing new — a bad model response cannot wipe the profile.
@@ -106,9 +108,10 @@ constraints and interests, and clear memory entirely.
 
 ## Security notes
 
-- The gateway secret lives only in the Worker (`GATEWAY_SECRET`). Never put it
-  in Vite code — `VITE_`-prefixed variables are bundled into the browser.
-- `worker/.dev.vars` is gitignored; use `worker/.dev.vars.example` as a template.
+- Direct mode uses the shared family credential embedded in the bundle, exactly
+  as Asase and akili-app do; no user input is needed.
+- In Worker mode, the credential lives only in the Worker and
+  `worker/.dev.vars` is gitignored.
 - The browser parses model output as text; action JSON is validated by field
   name and matched against known POI/route ids before anything happens.
 - User prompt text is passed through without HTML rendering; chat messages are

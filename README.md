@@ -4,9 +4,11 @@ A grounded travel companion for Makkah: a **social map** of real places, a
 **real street-level walk**, and an **agent** that drives the map from a
 client-side memory of the traveller.
 
-This is a prototype built on **100% free, keyless infrastructure** — no card,
-no metered API, no paid tier, no server to start. The web app is static; the
-only backend is one free Cloudflare Worker that proxies an AI gateway.
+This is a test prototype built on **100% free, keyless infrastructure** — no
+card, no metered API, no paid tier, no server to start. The web app is static
+and is published with **GitHub Pages**. By default the browser calls the Kiri
+Gateway directly (CORS is allowed); a Cloudflare Worker is available as an
+optional server-side mode for production.
 
 - **Repo:** `Nwokike/niyvaru` (private), default branch `master`
 - **Stack:** Vite + React + TypeScript + MapLibre GL JS + Cloudflare Pages/Worker
@@ -19,7 +21,7 @@ only backend is one free Cloudflare Worker that proxies an AI gateway.
 | Architecture and request flow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Data packs, sources, refresh, adding a city | [docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md) |
 | Agent, gateway, client memory, action protocol | [docs/AI_AND_MEMORY.md](docs/AI_AND_MEMORY.md) |
-| Deploy to Cloudflare for $0 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| GitHub Pages / Cloudflare, $0 deployment | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 | Mobile: PWA / Capacitor / Tauri research | [docs/MOBILE.md](docs/MOBILE.md) |
 | Errors and gotchas | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
 | How to contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -45,23 +47,16 @@ only backend is one free Cloudflare Worker that proxies an AI gateway.
 ```bash
 cd niyvaru
 npm install
-cp worker/.dev.vars.example worker/.dev.vars   # put a valid gateway key in it
-npm run data                                    # build public/packs/*.json
-
-# terminal 1 — API (choose ONE)
-npm run api:dev        # plain Node, works everywhere (recommended here)
-# npm run worker:dev   # wrangler dev, needs a workerd binary for your platform
-
-# terminal 2 — web app
-npm run dev            # http://127.0.0.1:5173, proxies /api to :8787
+npm run data           # build public/packs/*.json
+npm run dev            # http://127.0.0.1:5173 — no API process needed
 ```
 
-Open <http://127.0.0.1:5173>. The map and packs work even with no gateway key;
-chat returns a clear configuration error instead of failing silently.
+Open <http://127.0.0.1:5173>. Chat works immediately: it uses the same shared
+family gateway credential as the other Kiri apps, embedded at build time. Users
+do not configure anything.
 
-For a quick local smoke test, a valid family key is in Asase's public
-`src/core/constants.py` (`Nwokike/Asase`). For anything shared, use your own
-gateway secret. **Never commit `worker/.dev.vars`** — it is gitignored.
+Optional server-side mode: set `VITE_API_BASE=/api` and run `npm run api:dev`
+(or `npm run worker:dev`) with `worker/.dev.vars` configured.
 
 ## Scripts
 
@@ -81,6 +76,7 @@ gateway secret. **Never commit `worker/.dev.vars`** — it is gitignored.
 index.html                  app shell
 src/
   App.tsx                   UI: map, chat, feed, ops
+  config.ts                 API mode + gateway endpoints
   agent.ts                  chat client, SSE parser, action parser, memory study
   mapView.ts                MapLibre setup, POI/route layers, focus/highlight
   memory.ts                 localStorage profile + transcript
@@ -96,7 +92,8 @@ worker/wrangler.toml        Worker config (GATEWAY_URL var)
 data/build-data.mjs         free data pipeline -> public/packs/*.json
 public/packs/               generated packs (committed, versioned)
 .github/workflows/data.yml  daily pack refresh + commit
-scripts/dev-api.mjs         local Node host for the Worker handler
+.github/workflows/pages.yml build + deploy to GitHub Pages
+scripts/dev-api.mjs        local Node host for the Worker handler
 ```
 
 ## How a request works
@@ -104,23 +101,20 @@ scripts/dev-api.mjs         local Node host for the Worker handler
 1. The browser loads `packs/index.json`, then downloads the pack for the
    selected area (cached in IndexedDB, refreshed when the published version
    changes).
-2. A chat message is sent to `POST /api/chat` with the last 8 messages, the
-   client profile and a compact area summary (see [AI and memory](docs/AI_AND_MEMORY.md)).
-3. The Worker builds a grounded system prompt and streams the Kiri Gateway
-   response as SSE back to the browser.
+2. A chat message and a compact area summary (see [AI and memory](docs/AI_AND_MEMORY.md))
+   are sent straight to the Kiri Gateway from the browser.
+3. The gateway's SSE stream is read by `src/agent.ts`; a grounded system prompt
+   is assembled in the browser from `shared/`.
 4. The browser parses any map actions and executes them on the map; after the
-   answer, `POST /api/memory` extracts durable facts into the client profile.
+   answer, a second gateway call extracts durable facts into the client profile.
+   With `VITE_API_BASE` set, steps 2–4 go through the optional Worker instead.
 
 ## Deploy for $0
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Short version:
-
-```bash
-npm run build
-npx wrangler pages deploy dist --project-name niyvaru
-npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml
-npx wrangler deploy --config worker/wrangler.toml
-```
+Primary: push to `master` — `.github/workflows/pages.yml` builds with
+`VITE_BASE=/niyvaru/` and publishes to **https://nwokike.github.io/niyvaru/**.
+No Worker is needed. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the
+optional Cloudflare setup.
 
 ## Cost boundaries (read before promising "free")
 

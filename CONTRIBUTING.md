@@ -9,15 +9,13 @@ where that thing lives. If that is not true, fix the docs in the same PR.
 git clone https://github.com/Nwokike/niyvaru.git
 cd niyvaru
 npm install
-cp worker/.dev.vars.example worker/.dev.vars   # add a gateway key for chat
 npm run data
-npm run api:dev        # terminal 1
-npm run dev            # terminal 2 -> http://127.0.0.1:5173
+npm run dev            # http://127.0.0.1:5173
 ```
 
 Node 24 and npm 11 are what CI uses. No Python, Docker, database or paid API is
-needed. `wrangler dev` is optional; use `npm run api:dev` if it fails on your
-platform (see [Troubleshooting](docs/TROUBLESHOOTING.md)).
+needed. `npm run api:dev` and `wrangler dev` are only for the optional
+server-side mode (see [Troubleshooting](docs/TROUBLESHOOTING.md)).
 
 ## Ground rules
 
@@ -64,7 +62,7 @@ PR checklist:
 - [ ] Describes **why**, not only what.
 - [ ] Keeps the free-tier constraint.
 - [ ] Updates the relevant doc in `docs/` or this file.
-- [ ] Does not commit `worker/.dev.vars` or any key.
+- [ ] Does not commit `worker/.dev.vars` or credentials.
 - [ ] New data fields are added to `src/types.ts` and documented in
       [Data pipeline](docs/DATA_PIPELINE.md).
 

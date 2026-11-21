@@ -1,6 +1,9 @@
 import type { AgentAction, AreaSummary, ChatMessage, Profile } from "./types";
 import { memoryExtractionPrompt, profileToText } from "./memory";
 import { sanitizeProfile } from "../shared/profile";
+import { areaFacts } from "../shared/facts";
+import { buildSystemPrompt, buildChatMessages } from "../shared/prompt";
+import { API_BASE, DIRECT_MODE, GATEWAY_KEY, GATEWAY_URL } from "./config";
 
 export interface ChatResult {
   text: string;
@@ -85,6 +88,36 @@ async function readSse(res: Response, onToken: (t: string) => void): Promise<str
   return full;
 }
 
+function trimArea(area: AreaSummary): AreaSummary {
+  return {
+    id: area.id,
+    name: area.name,
+    center: area.center,
+    radius_m: area.radius_m,
+    pois: area.pois.slice(0, 120),
+    routes: area.routes,
+    prayer: area.prayer.slice(0, 2),
+    weather: area.weather.slice(0, 2),
+    events: area.events,
+  };
+}
+
+async function directGateway(messages: { role: string; content: string }[], stream: boolean) {
+  const res = await fetch(`${GATEWAY_URL}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GATEWAY_KEY}`,
+    },
+    body: JSON.stringify({ task_type: "text", stream, messages }),
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => "");
+    throw new Error(`gateway ${res.status}: ${err.slice(0, 200)}`);
+  }
+  return res;
+}
+
 export async function sendMessage(
   text: string,
   history: ChatMessage[],
@@ -92,43 +125,62 @@ export async function sendMessage(
   area: AreaSummary,
   onToken: (t: string) => void
 ): Promise<ChatResult> {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text,
-      history: history.slice(-8),
-      profile,
-      area: {
-        id: area.id,
-        name: area.name,
-        center: area.center,
-        radius_m: area.radius_m,
-        pois: area.pois.slice(0, 120),
-        routes: area.routes,
-        prayer: area.prayer.slice(0, 2),
-        weather: area.weather.slice(0, 2),
-        events: area.events,
-      },
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    throw new Error(`chat failed ${res.status}: ${err.slice(0, 200)}`);
+  const trimmed = trimArea(area);
+  let res: Response;
+
+  if (DIRECT_MODE) {
+    const system = buildSystemPrompt(profileToText(profile), areaFacts(trimmed));
+    const messages = buildChatMessages(system, history.slice(-8), text);
+    res = await directGateway(messages, true);
+  } else {
+    res = await fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, history: history.slice(-8), profile, area: trimmed }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      throw new Error(`chat failed ${res.status}: ${err.slice(0, 200)}`);
+    }
   }
+
   const full = await readSse(res, onToken);
   return { text: stripActionBlocks(full), actions: parseActions(full), model: "" };
 }
 
 /** Ask the model to study the transcript and return merged durable facts. */
 export async function extractMemory(history: ChatMessage[], profile: Profile): Promise<Profile> {
-  const res = await fetch("/api/memory", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ history: history.slice(-6), profile, prompt: memoryExtractionPrompt(history.slice(-6), profile) }),
-  });
-  if (!res.ok) return profile;
-  const data = (await res.json()) as Record<string, unknown>;
+  const recent = history.slice(-6);
+  const prompt = memoryExtractionPrompt(recent, profile);
+  let data: Record<string, unknown>;
+
+  if (DIRECT_MODE) {
+    const res = await directGateway(
+      [
+        { role: "system", content: "You extract structured traveller facts. Return JSON only." },
+        { role: "user", content: prompt },
+      ],
+      false
+    );
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const content = body.choices?.[0]?.message?.content ?? "";
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) return profile;
+    try {
+      data = JSON.parse(match[0]) as Record<string, unknown>;
+    } catch {
+      return profile;
+    }
+  } else {
+    const res = await fetch(`${API_BASE}/memory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ history: recent, profile, prompt }),
+    });
+    if (!res.ok) return profile;
+    data = (await res.json()) as Record<string, unknown>;
+  }
+
   const incoming = sanitizeProfile(data);
   // Preserve existing values when the model returns nothing new for a field.
   return {

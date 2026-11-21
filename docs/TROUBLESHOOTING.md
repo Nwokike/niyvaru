@@ -33,12 +33,13 @@
   image loading, but a CSP must allow `panoramax.openstreetmap.fr`.
 - A route can play without frames; the UI says "route only".
 
-## Chat returns `GATEWAY_SECRET is not configured`
+## Chat fails in Worker mode
 
-- Copy `worker/.dev.vars.example` to `worker/.dev.vars` and set a valid key.
-- Restart `npm run api:dev` or `npm run worker:dev` — env is read at startup.
-- In production, set the secret with
+- This only applies when `VITE_API_BASE` is set. Copy
+  `worker/.dev.vars.example` to `worker/.dev.vars`, restart the API process, and
+  in production set the Worker secret with
   `npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml`.
+- In direct mode (default on GitHub Pages) there is no Worker and no setup.
 
 ## Chat returns 502 / gateway errors
 

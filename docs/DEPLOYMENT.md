@@ -1,13 +1,31 @@
 # Deployment ($0)
 
-## Prerequisites
+## Primary: GitHub Pages (test / non-commercial)
 
-- A Cloudflare account on the **Free** plan (no card needed for Workers/Pages).
+`.github/workflows/pages.yml` builds with `VITE_BASE=/niyvaru/` and deploys the
+`dist/` output to GitHub Pages on every push to `master` (or `main`). The site
+is live at **https://nwokike.github.io/niyvaru/**. No API process, no Worker and
+no configuration is needed — chat calls the gateway directly from the browser.
+
+Enablement (already done for this repo): Settings → Pages → Source = GitHub
+Actions, and the repo must be public on a Free account.
+
+To reproduce a build locally:
+
+```bash
+npm install
+VITE_BASE=/niyvaru/ npm run build
+```
+
+## Optional: Cloudflare (server-side mode)
+
+### Prerequisites
+
+- A Cloudflare account on the **Free** plan (no card needed).
 - Node 24 + npm 11 locally.
-- `npx wrangler` installed as a dev dependency (already in `package.json`).
 - `wrangler login` completed once, or `CLOUDFLARE_API_TOKEN` in CI.
 
-## 1. Build and deploy the static site
+### 1. Build and deploy the static site
 
 ```bash
 npm install
@@ -44,17 +62,11 @@ dashboard → Workers → the Worker → Triggers → Routes), e.g.
 `niyvaru.pages.dev/api/*`. If you deploy via your own domain, use that domain
 in the route pattern.
 
-## 3. Local development against the deployed API
+### 3. Local development against the deployed API
 
-`vite.config.ts` proxies `/api` to `NIYVARU_API_TARGET`, default
-`http://127.0.0.1:8787`:
-
-```bash
-NIYVARU_API_TARGET=https://<your-worker>.workers.dev npm run dev
-```
-
-Do not put the gateway secret in a `VITE_` variable; anything prefixed `VITE_`
-is embedded in the browser bundle.
+For the optional Worker mode, set `VITE_API_BASE=https://<your-worker>.workers.dev`
+when building; `vite.config.ts` also proxies `/api` to `NIYVARU_API_TARGET`
+(default `http://127.0.0.1:8787`) for local development.
 
 ## 4. Data refresh
 
@@ -67,7 +79,7 @@ rebuilds automatically on the pack commit.
 ## 5. Verify a production deployment
 
 1. Open the site: map renders and POI pins are visible.
-2. Check `GET /api/health` from the site's origin.
+2. In Worker mode, check `GET /api/health`.
 3. Ask "walk me to a pharmacy" — a route appears and the walk overlay plays.
 4. Check the Ops tab: profile fields are editable and memory clears.
 5. `curl -I /packs/index.json` — should be 200 with a cache header.
@@ -82,7 +94,7 @@ promote it. For the Worker, `wrangler deployments list` shows versions; use
 
 | Item | Cost on Free |
 |---|---|
-| GitHub repo, Actions | $0 (public unlimited; private within included minutes) |
+| GitHub repo, Actions, Pages | $0 (Pages needs a public repo on Free) |
 | Cloudflare Pages | $0 |
 | Cloudflare Workers | $0 up to 100k requests/day |
 | OpenFreeMap, OSM/Overpass, Panoramax, EONET, OSRM demo | $0 |

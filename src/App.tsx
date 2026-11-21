@@ -5,6 +5,7 @@ import type * as maplibregl from "maplibre-gl";
 import { loadPack, loadPackIndex } from "./packs";
 import { loadHistory, loadProfile, saveHistory, saveProfile, clearMemory, defaultProfile } from "./memory";
 import { extractMemory, sendMessage, profileToText } from "./agent";
+import { DIRECT_MODE } from "./config";
 import { startWalk, type WalkHandle } from "./walkPlayer";
 
 const POSTS_KEY = "niyvaru.posts.v1";
@@ -208,6 +209,7 @@ export function App() {
           {today && <span className="pill">🕌 {today.maghrib} Maghrib</span>}
           {weather && <span className="pill">☀ {weather.temp_max_c}°C</span>}
           {pack && <span className="pill">v{pack.version.slice(0, 10)}</span>}
+          <span className="pill">{DIRECT_MODE ? "direct" : "worker"}</span>
         </div>
       </header>
 

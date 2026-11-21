@@ -36,7 +36,7 @@ async function idbSet(key: string, value: unknown): Promise<void> {
 }
 
 export async function loadPackIndex(): Promise<PackIndex> {
-  const res = await fetch("/packs/index.json", { cache: "no-cache" });
+  const res = await fetch(`${import.meta.env.BASE_URL}packs/index.json`, { cache: "no-cache" });
   if (!res.ok) throw new Error(`pack index failed: ${res.status}`);
   return (await res.json()) as PackIndex;
 }
@@ -54,7 +54,7 @@ export async function loadPack(areaId: string, index: PackIndex): Promise<AreaPa
   const cached = await idbGet<AreaPack & { version: string }>(cacheKey);
   if (cached && cached.version === index.version) return cached;
 
-  const res = await fetch(`/packs/${meta.file}`, { cache: "no-cache" });
+  const res = await fetch(`${import.meta.env.BASE_URL}packs/${meta.file}`, { cache: "no-cache" });
   if (!res.ok) throw new Error(`pack fetch failed: ${res.status}`);
   const pack = (await res.json()) as AreaPack;
   await idbSet(cacheKey, pack);
