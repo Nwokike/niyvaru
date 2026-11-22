@@ -357,9 +357,11 @@ export function Intake({
       </button>
       <p className="muted request-privacy">{d.intake.privacy}</p>
 
-      <button type="button" className="request-close" onClick={onClose} aria-label={d.common.close}>
-        ✕
-      </button>
+      {area ? (
+        <button type="button" className="request-close" onClick={onClose} aria-label={d.common.close}>
+          ✕
+        </button>
+      ) : null}
     </div>
   );
 }

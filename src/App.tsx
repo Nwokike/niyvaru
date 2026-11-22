@@ -109,8 +109,13 @@ export function App() {
     mapRef.current?.labelLanguage(locale === "ar" ? "ar" : "en");
   }, [locale]);
 
-  // ——— area assembly ———
-  const pickArea = useCallback((next: AreaMeta) => {
+  // From the form: select the area — assembly starts on submit
+  const selectArea = useCallback((next: AreaMeta) => {
+    setMeta(next);
+  }, []);
+
+  // ——— area assembly — called when the form is submitted ———
+  const startAssembly = useCallback((next: AreaMeta) => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -476,7 +481,7 @@ export function App() {
           area={meta}
           areas={areas}
           locale={locale}
-          onPickArea={pickArea}
+          onPickArea={selectArea}
           onClose={() => {
             setShowIntake(false);
             localStorage.setItem("niyvaru.intake.done", "1");
