@@ -233,6 +233,22 @@ button {
   height: 100%;
   background: var(--paper);
 }
+.app[data-view="form"] {
+  background: var(--paper) url("/brand/hero-makkah.png") center / cover no-repeat;
+}
+.app[data-view="form"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(251,247,241,0.6), rgba(251,247,241,0.88) 60%, rgba(251,247,241,0.95));
+  z-index: 1;
+  pointer-events: none;
+}
+.app[data-view="form"] .request-panel {
+  z-index: 2;
+  background: rgba(251, 247, 241, 0.88);
+  backdrop-filter: blur(16px);
+}
 .map {
   position: absolute;
   inset: 0;
@@ -326,11 +342,11 @@ button {
   z-index: 9;
   display: flex;
   flex-direction: column;
-  background: var(--glass);
+  background: rgba(251, 247, 241, 0.78);
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
   overflow: hidden;
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(16px);
   box-shadow: var(--shadow-card);
 }
 .panel-tabs {

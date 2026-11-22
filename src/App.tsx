@@ -325,7 +325,7 @@ export function App() {
   const lookupPlace = (id: string): Place | undefined => pack?.places.find((p) => p.id === id);
 
   return (
-    <div className="app">
+    <div className="app" data-view={view}>
       <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
       {/* The form IS the homepage — map behind, dimmed until assembled */}
