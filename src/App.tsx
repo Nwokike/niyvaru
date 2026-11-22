@@ -10,7 +10,6 @@ import { startWalk, type WalkHandle } from "./walk/player";
 import { addChatMessage } from "./memory/store";
 import { KIND_GROUPS } from "./brand/tokens";
 import { dict, applyDocumentLocale, type Locale } from "./config/i18n";
-import { Welcome } from "./ui/Welcome";
 import { Assembling } from "./ui/Assembling";
 import { Intake } from "./ui/Intake";
 import { PlaceCard } from "./ui/PlaceCard";
@@ -21,7 +20,7 @@ import { ChatPanel } from "./ui/ChatPanel";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "./sources/types";
 import type { TimePhase } from "./agent/tools";
 
-type View = "welcome" | "assembling" | "explore";
+type View = "form" | "assembling" | "explore";
 type StageView = { state: StageState; detail?: string };
 type Tab = "explore" | "pulse" | "brief" | "memory";
 
@@ -64,7 +63,7 @@ export function App() {
     return "en";
   });
   const d = dict(locale);
-  const [view, setView] = useState<View>("welcome");
+  const [view, setView] = useState<View>("form");
   const [showIntake, setShowIntake] = useState(false);
   const [meta, setMeta] = useState<AreaMeta | null>(null);
   const [pack, setPack] = useState<AreaPack | null>(null);
@@ -329,9 +328,8 @@ export function App() {
     <div className="app">
       <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
-      {view === "welcome" ? (
-        <Welcome d={d} onPick={pickArea} />
-      ) : null}
+      {/* The form IS the homepage — map behind, dimmed until assembled */}
+      {view === "form" && meta ? null : null}
 
       {view === "assembling" && meta ? (
         <Assembling
@@ -401,7 +399,7 @@ export function App() {
               <button className="chip" onClick={() => setTab("memory")} aria-label={d.memory.title}>
                 🧠
               </button>
-              <button className="chip" onClick={() => { setView("welcome"); setMeta(null); setPack(null); }} aria-label="change area">
+              <button className="chip" onClick={() => { setView("form"); setMeta(null); setPack(null); }} aria-label="change area">
                 ⟲
               </button>
             </div>
@@ -472,7 +470,7 @@ export function App() {
         </>
       ) : null}
 
-      {showIntake && view === "explore" ? (
+      {view === "form" ? (
         <Intake
           d={d}
           area={meta}

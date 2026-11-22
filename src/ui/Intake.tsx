@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Dictionary } from "../config/i18n";
 import { writeFile } from "../memory/store";
+import { searchAreas } from "../area/store";
 import type { AreaMeta } from "../sources/types";
 
 /**
@@ -120,6 +121,9 @@ export function Intake({
   const [interests, setInterests] = useState<string[]>([]);
   const [name, setName] = useState("");
   const [showDatesWarning, setShowDatesWarning] = useState(false);
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
 
   const finish = async (): Promise<void> => {
     const language = locale === "ar" ? "Arabic" : "English";
@@ -141,6 +145,20 @@ export function Intake({
       );
     } finally {
       onClose();
+    }
+  };
+
+  const runSearch = async (): Promise<void> => {
+    const q = search.trim();
+    if (q.length < 2 || searching) return;
+    setSearching(true);
+    try {
+      const found = await searchAreas(q);
+      setSearchResults(found);
+    } catch {
+      setSearchResults(null);
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -172,6 +190,35 @@ export function Intake({
 
       <fieldset className="request-group">
         <legend>{d.intake.area}</legend>
+        <div className="request-search">
+          <input
+            className="field"
+            value={search}
+            placeholder={d.welcome.searchPlaceholder}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void runSearch()}
+          />
+          {searching ? <span className="spinner" /> : null}
+        </div>
+        {searchResults?.length ? (
+          <div className="request-chips">
+            {searchResults.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="chip"
+                data-selected={r.id === stay}
+                onClick={() => {
+                  setStay(r.id);
+                  onPickArea(r);
+                }}
+              >
+                {r.name}
+                {r.country ? <span className="featured-sub">{r.country}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="request-chips">
           {(areas.length ? areas : area ? [area] : []).map((a) => (
             <button
@@ -181,7 +228,7 @@ export function Intake({
               data-selected={a.id === stay}
               onClick={() => {
                 setStay(a.id);
-                if (a.id !== area?.id) onPickArea(a);
+                onPickArea(a);
               }}
             >
               {a.name.split("—")[0].trim()}
