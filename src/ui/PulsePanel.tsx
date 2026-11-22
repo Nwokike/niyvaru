@@ -91,6 +91,7 @@ export function PulsePanel({
 
   const weather = pack.weather[0];
   const prayer = pack.prayer[0];
+  const hasPulse = merged.length > 0;
 
   const post = (): void => {
     const text = draft.trim();
@@ -143,7 +144,10 @@ export function PulsePanel({
         </button>
       </div>
 
-      {merged.length === 0 ? <p className="muted">{d.pulse.empty}</p> : null}
+      {!hasPulse && !weather && !prayer ? (
+        <p className="muted">{d.common.loading} — the pulse fills as sources arrive…</p>
+      ) : null}
+      {hasPulse === false && (weather || prayer) ? <p className="muted">{d.pulse.empty}</p> : null}
       {merged.map((item) => (
         <article key={item.id} className="pulse-item">
           <div className="pulse-head">

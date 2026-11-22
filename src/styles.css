@@ -362,7 +362,7 @@ button {
   z-index: 9;
   display: flex;
   flex-direction: column;
-  background: rgba(251, 247, 241, 0.78);
+  background: rgba(251, 247, 241, 0.72);
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
   overflow: hidden;

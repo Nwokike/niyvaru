@@ -100,6 +100,8 @@ export async function initMap(
   debugLog("map", "load fired — style ready");
   signal?.throwIfAborted();
 
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }), "bottom-right");
+
   addPlaceLayers(map);
   addRouteLayers(map);
 
