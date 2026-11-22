@@ -140,7 +140,11 @@ export function App() {
     getOrAssembleArea(meta, onStage, (fresh) => {
       setPack(fresh);
       setHero(fresh.heroPhoto);
-    }, controller.signal).catch((e) => {
+    }, controller.signal).then((assembled) => {
+      if (controller.signal.aborted) return;
+      setPack(assembled);
+      setHero(assembled.heroPhoto);
+    }).catch((e) => {
       if (!controller.signal.aborted) setNotice(String((e as Error).message ?? e));
     });
     return () => controller.abort();
@@ -482,10 +486,11 @@ export function App() {
           areas={areas}
           locale={locale}
           onPickArea={selectArea}
-          onClose={() => {
+          onClose={(chosen) => {
             setShowIntake(false);
             localStorage.setItem("niyvaru.intake.done", "1");
             setMemoryRev((r) => r + 1);
+            if (chosen) startAssembly(chosen);
           }}
         />
       ) : null}

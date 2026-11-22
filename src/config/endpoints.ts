@@ -47,6 +47,12 @@ export const endpoints = {
     timeoutMs: 25000,
   },
 
+  osmMap: {
+    /** Core OSM map API — same ODbL data, CORS-enabled, the reliable fallback
+     *  wherever Overpass mirrors are rate-limited or blocked by a network. */
+    url: "https://api.openstreetmap.org/api/0.6/map",
+  },
+
   tiles: {
     openFreeMapStyle: "https://tiles.openfreemap.org/styles/liberty",
     planetPmtiles: "https://tiles.openfreemap.org/planet",

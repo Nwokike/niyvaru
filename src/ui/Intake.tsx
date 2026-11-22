@@ -104,7 +104,7 @@ export function Intake({
   areas: AreaMeta[];
   locale: "en" | "ar";
   onPickArea: (meta: AreaMeta) => void;
-  onClose: () => void;
+  onClose: (area: AreaMeta | null) => void;
 }) {
   const [stay, setStay] = useState(area?.id ?? "");
   const [checkin, setCheckin] = useState("");
@@ -120,31 +120,44 @@ export function Intake({
   const [wheelchair, setWheelchair] = useState(false);
   const [interests, setInterests] = useState<string[]>([]);
   const [name, setName] = useState("");
-  const [showDatesWarning, setShowDatesWarning] = useState(false);
+  const [showWarning, setShowDatesWarning] = useState(false);
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
 
   const finish = async (): Promise<void> => {
     const language = locale === "ar" ? "Arabic" : "English";
+    // A typed-but-unpicked search counts as the selection too — the button
+    // must never be a dead end just because a chip wasn't clicked.
+    let current = areas.find((a) => a.id === stay) ?? area ?? searchResults?.[0] ?? null;
+    if (!current && search.trim().length >= 2) {
+      try {
+        current = (await searchAreas(search.trim()))[0] ?? null;
+      } catch {
+        current = null;
+      }
+    }
+    if (!current) {
+      setShowDatesWarning(true);
+      return;
+    }
     try {
       await writeFile(
         "/memories/traveller.md",
         travellerMarkdown({ name, adults, children, rooms, standard, proximity, breakfast, elderly, wheelchair, interests, language })
       );
-      const current = areas.find((a) => a.id === stay) ?? area;
       await writeFile(
         "/memories/trip.md",
         tripMarkdown({
-          areaName: current?.name ?? area?.name ?? "not chosen yet",
-          country: current?.country ?? area?.country,
+          areaName: current.name,
+          country: current.country,
           checkin,
           checkout,
           flexible,
         })
       );
     } finally {
-      onClose();
+      onClose(current);
     }
   };
 
@@ -163,10 +176,6 @@ export function Intake({
   };
 
   const submit = (): void => {
-    if (!checkin || !checkout) {
-      setShowDatesWarning(true);
-      return;
-    }
     void finish();
   };
 
@@ -354,7 +363,7 @@ export function Intake({
         <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
 
-      {showDatesWarning ? <p className="request-warning">{d.intake.datesRequired}</p> : null}
+      {showWarning ? <p className="request-warning">{d.intake.areaRequired}</p> : null}
 
       <button type="button" className="btn btn-bronze request-cta" onClick={submit}>
         {d.intake.cta}

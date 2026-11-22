@@ -22,7 +22,12 @@ export async function newsForArea(
       timespan: "2d",
       sort: "datedesc",
     });
-    const res = await fetch(`${endpoints.gdelt.doc}?${params}`, { signal });
+    // GDELT often hangs for 15 s+ from browser origins. News is optional
+    // pulse, never a gate on showing the assembled city.
+    const deadline = AbortSignal.timeout(5000);
+    const res = await fetch(`${endpoints.gdelt.doc}?${params}`, {
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    });
     if (!res.ok) throw new Error(`gdelt ${res.status}`);
     const json = (await res.json()) as {
       articles?: { url: string; title: string; seendate?: string; domain?: string; socialimage?: string }[];

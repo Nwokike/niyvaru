@@ -69,7 +69,7 @@ function buildQuery(bbox: Bbox, selectors: Selector[]): string {
   return `[out:json][timeout:40];\n(\n${body}\n);\nout center tags;`;
 }
 
-function normalizeKind(tags: Record<string, string>): Kind {
+export function normalizeKind(tags: Record<string, string>): Kind {
   if (tags.tourism === "hotel" || tags.tourism === "hostel" || tags.tourism === "guest_house" || tags.tourism === "apartment") return "hotel";
   if (tags.amenity === "pharmacy" || tags.healthcare === "pharmacy") return "pharmacy";
   if (tags.amenity === "restaurant" || tags.amenity === "fast_food" || tags.amenity === "food_court") return "food";
@@ -87,7 +87,7 @@ function normalizeKind(tags: Record<string, string>): Kind {
   return "civic";
 }
 
-function toTags(t: Record<string, string>): PlaceTags {
+export function toTags(t: Record<string, string>): PlaceTags {
   return {
     openingHours: t.opening_hours || undefined,
     wheelchair: t.wheelchair || undefined,

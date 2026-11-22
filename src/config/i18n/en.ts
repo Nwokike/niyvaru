@@ -118,6 +118,7 @@ export const en = {
     interestOptions: { calm: "Quiet & calm", food: "Food", heritage: "Heritage", nature: "Nature", shopping: "Shopping", family: "Family-friendly" },
     name: "Name (optional)",
     datesRequired: "Please add your check-in and check-out dates.",
+    areaRequired: "Search for a city or pick one from the list to begin.",
     cta: "Begin exploring",
     privacy: "Your answers are saved on this device only — they teach your concierge what matters. No account, no server.",
   },

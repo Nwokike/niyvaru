@@ -61,12 +61,14 @@ export async function getOrAssembleArea(
     const fresh = Date.now() - new Date(cachedPack.version).getTime() < FRESH_MS;
     if (!fresh) {
       void assembleArea(meta, onStage, signal)
-        .then((pack) => onUpdate?.(pack))
+        .then((freshPack) => onUpdate?.(freshPack))
         .catch(() => {});
     }
+    onUpdate?.(cachedPack);
     return cachedPack;
   }
   const pack = await assembleArea(meta, onStage, signal);
+  onUpdate?.(pack);
   await savePack(meta.id, pack);
   return pack;
 }

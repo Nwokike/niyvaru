@@ -8,7 +8,7 @@
  * Everything above talks to MapApi; nothing below knows about React.
  */
 import * as maplibregl from "maplibre-gl";
-import type { Map as MLMap, LngLatBoundsLike, MapEventType } from "maplibre-gl";
+import type { Map as MLMap, LngLatBoundsLike } from "maplibre-gl";
 import { loadRegradedStyle, applyPalette, setLabelLanguage, type RegradedStyle } from "./style";
 import { paletteAt } from "./palette";
 import {
@@ -44,16 +44,6 @@ function deviceLowPower(): boolean {
   const memoryGb = typeof nav.deviceMemory === "number" ? nav.deviceMemory : 8;
   const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
   return coarsePointer && memoryGb < 6;
-}
-
-function once(map: MLMap, event: keyof maplibregl.MapEventType): Promise<void> {
-  return new Promise((resolve) => {
-    const handler = (): void => {
-      map.off(event, handler);
-      resolve();
-    };
-    map.on(event, handler);
-  });
 }
 
 export async function initMap(
@@ -95,9 +85,11 @@ export async function initMap(
     bearing: -15,
   });
 
-  await once(map, "load");
+  // style.load is the real readiness signal: MapLibre's `load` waits on every
+  // DEM tile and can stall forever while the map itself is usable.
+  await regraded.ready;
   done();
-  debugLog("map", "load fired — style ready");
+  debugLog("map", "style ready");
   signal?.throwIfAborted();
 
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }), "bottom-right");

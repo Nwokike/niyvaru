@@ -36,6 +36,9 @@ export interface RegradedStyle {
   map: MaplibreMap;
   roles: RoleRef[];
   lastHour: number | null;
+  /** Resolves on style.load — do not wait for MapLibre's `load`, which can
+   *  stall indefinitely behind DEM tiles on slow connections. */
+  ready: Promise<void>;
 }
 
 const DEM_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
@@ -56,11 +59,14 @@ export async function loadRegradedStyle(
     attributionControl: { compact: true, customAttribution: 'Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrarium tiles (AWS Open Data)</a>' },
     ...options,
   });
-  const regraded: RegradedStyle = { map, roles: [], lastHour: null };
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => { markReady = resolve; });
+  const regraded: RegradedStyle = { map, roles: [], lastHour: null, ready };
   map.on("style.load", () => {
     debugLog("map", "style.load — classifying layers, adding terrain");
     setup(regraded);
     if (regraded.lastHour != null) applyPalette(regraded, regraded.lastHour);
+    markReady();
   });
   (window as unknown as { __niyvaruRegrade?: RegradedStyle }).__niyvaruRegrade = regraded;
   map.on("error", (e: unknown) => {

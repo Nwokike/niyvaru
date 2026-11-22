@@ -7,6 +7,7 @@
  */
 import { cached, savePack } from "./cache";
 import { fetchPlacesSharded, type ShardProgress } from "./overpass";
+import { fetchPlacesFromOsmMap } from "./osmMap";
 import { storiesNear } from "./wikipedia";
 import { photosNear as panoramaxNear } from "./panoramax";
 import { walkingRoute } from "./walkingRoutes";
@@ -250,6 +251,13 @@ export async function assembleArea(
         detail: `${progress.shard} shard: ${progress.count} places`,
       });
     }, signal);
+    if (!places.length) {
+      onStage({ key: "places", state: "active", detail: "overpass unavailable — reading OpenStreetMap directly" });
+      const fallback = await fetchPlacesFromOsmMap(bbox, signal);
+      onStage({ key: "places", state: "active", detail: `${fallback.length} places from OpenStreetMap` });
+      counts.places = fallback.length;
+      return fallback;
+    }
     counts.places = places.length;
     return places;
   }, [], () => `${counts.places} places`);
