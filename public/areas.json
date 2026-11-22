@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "note": "Featured areas are editorial data, not code. Adding a city is adding an entry — or the traveller simply searches for it.",
+  "areas": [
+    {
+      "id": "makkah-haram",
+      "name": "Makkah — Haram",
+      "country": "Saudi Arabia",
+      "lat": 21.4225,
+      "lon": 39.8262,
+      "radiusM": 2000,
+      "zoom": 15.2,
+      "language": "en",
+      "prayerMethod": "umm_al_qura",
+      "feeds": { "hashtags": ["Makkah", "Umrah", "Hajj"], "gdeltQuery": "Makkah OR Mecca" }
+    },
+    {
+      "id": "madinah-haram",
+      "name": "Madinah — Prophet's Mosque",
+      "country": "Saudi Arabia",
+      "lat": 24.4672,
+      "lon": 39.6112,
+      "radiusM": 1800,
+      "zoom": 15.4,
+      "language": "en",
+      "prayerMethod": "umm_al_qura",
+      "feeds": { "hashtags": ["Madinah", "Medina", "Umrah"], "gdeltQuery": "Madinah OR Medina" }
+    },
+    {
+      "id": "lagos-island",
+      "name": "Lagos — Island",
+      "country": "Nigeria",
+      "lat": 6.4550,
+      "lon": 3.3950,
+      "radiusM": 2500,
+      "zoom": 15.0,
+      "language": "en",
+      "feeds": { "hashtags": ["Lagos"], "gdeltQuery": "Lagos" }
+    },
+    {
+      "id": "manhattan-midtown",
+      "name": "New York — Midtown Manhattan",
+      "country": "United States",
+      "lat": 40.7580,
+      "lon": -73.9855,
+      "radiusM": 2000,
+      "zoom": 15.2,
+      "language": "en",
+      "feeds": { "hashtags": ["NYC", "Manhattan"], "gdeltQuery": "\"New York\" Manhattan" }
+    },
+    {
+      "id": "istanbul-sultanahmet",
+      "name": "Istanbul — Sultanahmet",
+      "country": "Türkiye",
+      "lat": 41.0055,
+      "lon": 28.9769,
+      "radiusM": 1800,
+      "zoom": 15.4,
+      "language": "en",
+      "prayerMethod": "diyanet",
+      "feeds": { "hashtags": ["Istanbul"], "gdeltQuery": "Istanbul" }
+    }
+  ]
+}

@@ -1,9 +1,18 @@
-import { buildSystemPrompt, buildChatMessages, areaFacts } from "../../shared/prompt.ts";
-import { profileToText } from "../../shared/profile.ts";
-
+/**
+ * Optional Worker mode — the only place a server identity is allowed.
+ * Routes:
+ *   GET  /api/health   → liveness
+ *   POST /api/chat     → Kiri Gateway /chat passthrough (SSE, family contract)
+ *   POST /api/memory   → non-streaming gateway call for JSON extraction
+ *   GET  /api/weather  → MET Norway Locationforecast with an identifying
+ *                        User-Agent (browsers cannot set one themselves)
+ * Everything the app does works without this Worker; these routes exist for
+ * capability, not necessity.
+ */
 interface Env {
-  GATEWAY_SECRET?: string;
   GATEWAY_URL?: string;
+  GATEWAY_SECRET?: string;
+  WEATHER_CONTACT?: string;
 }
 
 const CORS = {
@@ -12,90 +21,79 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json", ...CORS },
   });
 }
 
-function gatewayBase(env: Env): string {
-  return (env.GATEWAY_URL || "https://api.kiri.ng").replace(/\/$/, "");
-}
-
-async function callGateway(env: Env, messages: { role: string; content: string }[], stream: boolean) {
-  const res = await fetch(`${gatewayBase(env)}/chat`, {
+async function callGateway(env: Env, body: Record<string, unknown>): Promise<Response> {
+  const base = (env.GATEWAY_URL || "https://api.kiri.ng").replace(/\/$/, "");
+  return fetch(`${base}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.GATEWAY_SECRET || ""}`,
+      Authorization: `Bearer ${env.GATEWAY_SECRET ?? ""}`,
     },
-    body: JSON.stringify({ task_type: "text", stream, messages }),
+    body: JSON.stringify({ task_type: "text", ...body }),
   });
-  return res;
 }
 
-async function handleChat(req: Request, env: Env): Promise<Response> {
-  if (!env.GATEWAY_SECRET) {
-    return json({ error: "GATEWAY_SECRET is not configured on this worker." }, 500);
-  }
-  const body = (await req.json()) as {
-    text?: string;
-    history?: { role: string; content: string }[];
-    profile?: unknown;
-    area?: Parameters<typeof areaFacts>[0];
-  };
-  if (!body.text || !body.area) return json({ error: "text and area are required" }, 400);
-
-  const profileText = profileToText(body.profile as never);
-  const system = buildSystemPrompt(profileText, areaFacts(body.area));
-  const messages = buildChatMessages(system, body.history ?? [], body.text);
-
-  const upstream = await callGateway(env, messages, true);
+async function handleChat(request: Request, env: Env): Promise<Response> {
+  if (!env.GATEWAY_SECRET) return json({ error: "GATEWAY_SECRET is not configured on this worker." }, 500);
+  const body = (await request.json()) as { messages?: unknown; stream?: boolean };
+  if (!body.messages) return json({ error: "messages are required" }, 400);
+  const upstream = await callGateway(env, { stream: true, messages: body.messages });
   if (!upstream.ok || !upstream.body) {
     const err = await upstream.text().catch(() => "");
     return json({ error: `gateway ${upstream.status}: ${err.slice(0, 200)}` }, 502);
   }
   return new Response(upstream.body, {
     status: 200,
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store", ...CORS },
+  });
+}
+
+async function handleMemory(request: Request, env: Env): Promise<Response> {
+  if (!env.GATEWAY_SECRET) return json({ error: "GATEWAY_SECRET is not configured." }, 500);
+  const body = (await request.json()) as { messages?: unknown };
+  const upstream = await callGateway(env, { stream: false, messages: body.messages });
+  if (!upstream.ok) return json({ error: `gateway ${upstream.status}` }, 502);
+  return json(await upstream.json());
+}
+
+async function handleWeather(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const lat = url.searchParams.get("lat");
+  const lon = url.searchParams.get("lon");
+  if (!lat || !lon) return json({ error: "lat and lon are required" }, 400);
+  const contact = env.WEATHER_CONTACT || "niyvaru-worker/1.0 (prototype)";
+  const upstream = await fetch(
+    `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`,
+    { headers: { "User-Agent": contact, Accept: "application/json" } }
+  );
+  if (!upstream.ok) return json({ error: `met.no ${upstream.status}` }, 502);
+  return new Response(upstream.body, {
+    status: 200,
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-store",
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=1800",
       ...CORS,
     },
   });
 }
 
-async function handleMemory(req: Request, env: Env): Promise<Response> {
-  if (!env.GATEWAY_SECRET) return json({ error: "GATEWAY_SECRET is not configured." }, 500);
-  const body = (await req.json()) as { prompt?: string; profile?: unknown };
-  if (!body.prompt) return json({ error: "prompt is required" }, 400);
-  const messages = [
-    { role: "system", content: "You extract structured traveller facts. Return JSON only." },
-    { role: "user", content: body.prompt },
-  ];
-  const upstream = await callGateway(env, messages, false);
-  if (!upstream.ok) return json({ error: `gateway ${upstream.status}` }, 502);
-  const data = (await upstream.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = data.choices?.[0]?.message?.content ?? "";
-  const match = content.match(/\{[\s\S]*\}/);
-  if (!match) return json({ error: "no JSON in model output" }, 502);
-  try {
-    return json(JSON.parse(match[0]));
-  } catch {
-    return json({ error: "invalid JSON from model" }, 502);
-  }
-}
-
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
-    const url = new URL(req.url);
-    if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-    if (url.pathname === "/api/health" && req.method === "GET") {
-      return json({ ok: true, service: "niyvaru-api", gateway: gatewayBase(env) });
+  async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
+    const url = new URL(request.url);
+    if (url.pathname === "/api/health" && request.method === "GET") {
+      return json({ ok: true, service: "niyvaru-api" });
     }
-    if (url.pathname === "/api/chat" && req.method === "POST") return handleChat(req, env);
-    if (url.pathname === "/api/memory" && req.method === "POST") return handleMemory(req, env);
+    if (url.pathname === "/api/chat" && request.method === "POST") return handleChat(request, env);
+    if (url.pathname === "/api/memory" && request.method === "POST") return handleMemory(request, env);
+    if (url.pathname === "/api/weather" && request.method === "GET") return handleWeather(request, env);
     return json({ error: "not found" }, 404);
   },
 };

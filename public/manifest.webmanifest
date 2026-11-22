@@ -1,0 +1,24 @@
+{
+  "name": "Niyvaru — feel the place",
+  "short_name": "Niyvaru",
+  "description": "A living map of any city on Earth, assembled in real time from open data.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fbf7f1",
+  "theme_color": "#fbf7f1",
+  "icons": [
+    {
+      "src": "./brand/favicon.ico",
+      "sizes": "48x48 32x32 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

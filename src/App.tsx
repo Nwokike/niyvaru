@@ -1,345 +1,493 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentAction, AreaPack, ChatMessage, Poi, Post, Profile, WalkRoute } from "./types";
-import { initMap, setPois, setRoutes, focusPoi, highlightKind, showRoute, onPoiClick } from "./mapView";
-import type * as maplibregl from "maplibre-gl";
-import { loadPack, loadPackIndex } from "./packs";
-import { loadHistory, loadProfile, saveHistory, saveProfile, clearMemory, defaultProfile } from "./memory";
-import { extractMemory, sendMessage, profileToText } from "./agent";
-import { DIRECT_MODE } from "./config";
-import { startWalk, type WalkHandle } from "./walkPlayer";
+import type { NiyvaruAgent } from "./agent/runtime";
+import type { MapApi } from "./map/mapView";
+import { getOrAssembleArea } from "./area/store";
+import type { StageKey, StageState, StageUpdate } from "./sources/assemble";
+import { requestPersistence } from "./sources/cache";
+import { walkingRoute } from "./sources/walkingRoutes";
+import { fetchFramesForRoute, matchFramesToRoute } from "./walk/matcher";
+import { startWalk, type WalkHandle } from "./walk/player";
+import { addChatMessage } from "./memory/store";
+import { KIND_GROUPS } from "./brand/tokens";
+import { dict, applyDocumentLocale, type Locale } from "./config/i18n";
+import { Welcome } from "./ui/Welcome";
+import { Assembling } from "./ui/Assembling";
+import { Intake } from "./ui/Intake";
+import { PlaceCard } from "./ui/PlaceCard";
+import { PulsePanel } from "./ui/PulsePanel";
+import { BriefPanel } from "./ui/BriefPanel";
+import { MemoryPanel } from "./ui/MemoryPanel";
+import { ChatPanel } from "./ui/ChatPanel";
+import type { AreaMeta, AreaPack, Place, WalkRoute } from "./sources/types";
+import type { TimePhase } from "./agent/tools";
 
-const POSTS_KEY = "niyvaru.posts.v1";
-const DEFAULT_AREA = "makkah-haram";
+type View = "welcome" | "assembling" | "explore";
+type StageView = { state: StageState; detail?: string };
+type Tab = "explore" | "pulse" | "brief" | "memory";
 
-function loadPosts(): Post[] {
-  try {
-    const raw = localStorage.getItem(POSTS_KEY);
-    if (raw) return JSON.parse(raw) as Post[];
-  } catch {
-    /* ignore */
-  }
-  return [
-    {
-      id: "seed-1",
-      area: DEFAULT_AREA,
-      place_name: "Near King Abdulaziz Gate",
-      body: "Crowds thin out about 20 min after Maghrib. The pharmacy on Ajyad street is open late.",
-      mood: "calm",
-      created_at: new Date().toISOString(),
-    },
-  ];
+const EMPTY_STAGES: Record<StageKey, StageView> = {
+  places: { state: "pending" },
+  photos: { state: "pending" },
+  story: { state: "pending" },
+  routes: { state: "pending" },
+  pulse: { state: "pending" },
+};
+
+const PHASE_T: Record<TimePhase, number> = { dawn: 0, day: 1 / 3, golden: 2 / 3, night: 1 };
+// Named stops on the 24h dial (Sete Colinas pattern)
+const TOD_STOPS: { label: string; hour: number }[] = [
+  { label: "Dawn", hour: 6.5 },
+  { label: "Midday", hour: 13 },
+  { label: "Golden", hour: 18.5 },
+  { label: "Night", hour: 23 },
+];
+
+function todClock(hour: number): string {
+  const hh = Math.floor(hour % 24);
+  const mm = Math.floor((hour % 1) * 60);
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
-export function App() {
-  const mapEl = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const walkRef = useRef<WalkHandle | null>(null);
-  const lookupRef = useRef<(id: string) => Poi | undefined>(() => undefined);
+function nearestStop(hour: number): (typeof TOD_STOPS)[number] {
+  return TOD_STOPS.reduce((best, stop) => (Math.abs(stop.hour - hour) < Math.abs(best.hour - hour) ? stop : best), TOD_STOPS[0]);
+}
 
-  const [packIndex, setPackIndex] = useState<{ areas: { id: string; name: string }[] } | null>(null);
+
+
+export function App() {
+  // Language is automatic: a saved choice wins, otherwise the browser's
+  // language decides (first visit anywhere in the world).
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const stored = localStorage.getItem("niyvaru.locale");
+    if (stored === "en" || stored === "ar") return stored;
+    if (typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("ar")) return "ar";
+    return "en";
+  });
+  const d = dict(locale);
+  const [view, setView] = useState<View>("welcome");
+  const [showIntake, setShowIntake] = useState(false);
+  const [meta, setMeta] = useState<AreaMeta | null>(null);
   const [pack, setPack] = useState<AreaPack | null>(null);
-  const [profile, setProfile] = useState<Profile>(() => loadProfile());
-  const [history, setHistory] = useState<ChatMessage[]>(() => loadHistory());
-  const [posts, setPosts] = useState<Post[]>(() => loadPosts());
-  const [tab, setTab] = useState<"chat" | "feed" | "ops">("chat");
-  const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [notice, setNotice] = useState<string>("");
-  const [activeRoute, setActiveRoute] = useState<string | null>(null);
+  const [stages, setStages] = useState<Record<StageKey, StageView>>(EMPTY_STAGES);
+  const [revealing, setRevealing] = useState(false);
+  const [hero, setHero] = useState<AreaPack["heroPhoto"]>(undefined);
+  const [tab, setTab] = useState<Tab>("explore");
+  const [activeKindGroup, setActiveKindGroup] = useState<string | null>(null);
+  const [place, setPlace] = useState<Place | null>(null);
   const [walking, setWalking] = useState(false);
+  // The hour auto-follows the browser's local time — night opens dark,
+  // golden hour opens warm. The slider lets you override it.
+  const [tod, setTod] = useState(() => {
+    const h = new Date().getHours() + new Date().getMinutes() / 60;
+    return h;
+  });
+  const [agent, setAgent] = useState<NiyvaruAgent | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [memoryRev, setMemoryRev] = useState(0);
+  const [notice, setNotice] = useState("");
+  const [areas, setAreas] = useState<AreaMeta[]>([]);
+
+  const mapEl = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapApi | null>(null);
+  const walkRef = useRef<WalkHandle | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const packRef = useRef<AreaPack | null>(null);
+  packRef.current = pack;
+  const localeRef = useRef<Locale>(locale);
+  localeRef.current = locale;
+
+  // persistence + locale side effects
+  useEffect(() => {
+    void requestPersistence();
+    void import("./area/store")
+      .then(({ featuredAreas }) => featuredAreas())
+      .then(setAreas)
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    applyDocumentLocale(locale);
+    localStorage.setItem("niyvaru.locale", locale);
+    mapRef.current?.labelLanguage(locale === "ar" ? "ar" : "en");
+  }, [locale]);
+
+  // ——— area assembly ———
+  const pickArea = useCallback((next: AreaMeta) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setMeta(next);
+    setPack(null);
+    setHero(undefined);
+    setStages(EMPTY_STAGES);
+    setRevealing(false);
+    setPlace(null);
+    setTab("explore");
+    setView("assembling");
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const map = await initMap(mapEl.current!);
-      if (cancelled) return;
-      mapRef.current = map;
-      const index = await loadPackIndex();
-      if (cancelled) return;
-      setPackIndex(index);
-      const p = await loadPack(DEFAULT_AREA, index);
-      if (cancelled) return;
-      setPack(p);
-      setPois(map, p.pois);
-      setRoutes(map, p.routes);
-      lookupRef.current = (id) => p.pois.find((x) => x.id === id);
-      onPoiClick(
-        map,
-        (poi) => {
-          setNotice(`${poi.name_en || poi.name} · ${poi.kind}${poi.tags?.opening_hours ? ` · open ${poi.tags.opening_hours}` : ""}${poi.tags?.wheelchair ? ` · wheelchair ${poi.tags.wheelchair}` : ""}`);
-        },
-        (id) => lookupRef.current(id)
-      );
-    })().catch((e) => setNotice(`map init failed: ${String(e)}`));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (view !== "assembling" || !meta) return;
+    const controller = abortRef.current ?? new AbortController();
+    const onStage = (update: StageUpdate): void =>
+      setStages((s) => ({
+        ...s,
+        [update.key]: { state: update.state, detail: update.detail ?? s[update.key]?.detail },
+      }));
+    getOrAssembleArea(meta, onStage, (fresh) => {
+      setPack(fresh);
+      setHero(fresh.heroPhoto);
+    }, controller.signal).catch((e) => {
+      if (!controller.signal.aborted) setNotice(String((e as Error).message ?? e));
+    });
+    return () => controller.abort();
+  }, [view, meta]);
 
-  const area = useMemo(() => {
-    if (!pack) return null;
-    return {
-      id: pack.id,
-      name: pack.name,
-      center: pack.center,
-      radius_m: pack.radius_m,
-      pois: pack.pois,
-      routes: pack.routes,
-      prayer: pack.prayer,
-      weather: pack.weather,
-      events: pack.events,
+  // ——— reveal once every stage settles (the grow-and-fade moment) ———
+  const revealedRef = useRef(false);
+  useEffect(() => {
+    if (view !== "assembling" || !meta) return;
+    const settled = (Object.keys(EMPTY_STAGES) as StageKey[]).every(
+      (k) => stages[k].state === "done" || stages[k].state === "failed"
+    );
+    if (settled && !revealedRef.current) {
+      revealedRef.current = true;
+      setRevealing(true);
+      window.setTimeout(() => {
+        setView("explore");
+        if (!localStorage.getItem("niyvaru.intake.done")) setShowIntake(true);
+      }, 750);
+    }
+  }, [stages, view, meta]);
+
+  useEffect(() => {
+    return () => {
+      revealedRef.current = false;
     };
+  }, [meta]);
+
+  // ——— map lifecycle: loads under the loader, destroyed on area change ———
+  useEffect(() => {
+    if (!meta || !mapEl.current) return;
+    let disposed = false;
+    const apiPromise = import("./map/mapView")
+      .then(({ initMap }) => initMap(mapEl.current!, meta))
+      .then((api) => {
+        if (disposed) {
+          api.destroy();
+          return null;
+        }
+        mapRef.current = api;
+        if (packRef.current) api.setPlaces(packRef.current);
+        api.onPlaceClick(
+          (p) => {
+            setPlace(p);
+            api.focusPlace(p, () => setPlace(p));
+          },
+          (id) => packRef.current?.places.find((x) => x.id === id)
+        );
+        api.labelLanguage(localeRef.current === "ar" ? "ar" : "en");
+        return api;
+      })
+      .catch((e) => {
+        if (!disposed) setNotice(`map failed: ${String((e as Error).message ?? e)}`);
+        return null;
+      });
+    return () => {
+      disposed = true;
+      void apiPromise.then((api) => api?.destroy());
+      mapRef.current = null;
+    };
+  }, [meta]);
+
+  useEffect(() => {
+    if (mapRef.current && pack) mapRef.current.setPlaces(pack);
   }, [pack]);
 
-  const runActions = useCallback(
-    (actions: AgentAction[]) => {
-      const map = mapRef.current;
-      if (!map || !pack) return;
-      for (const a of actions) {
-        if (a.action === "focus_poi") {
-          const poi = pack.pois.find((p) => p.id === a.id);
-          if (poi) focusPoi(map, poi);
-        } else if (a.action === "highlight_kind") {
-          highlightKind(map, a.kind);
-        } else if (a.action === "clear") {
-          highlightKind(map, null);
-          showRoute(map, null);
-          setActiveRoute(null);
-        } else if (a.action === "show_route") {
-          const route = pack.routes.find((r) => r.id === a.id);
-          if (route) {
-            showRoute(map, route);
-            setActiveRoute(route.id);
-          }
-        } else if (a.action === "start_walk") {
-          const route =
-            pack.routes.find((r) => r.id === a.route) ??
-            (a.route ? undefined : pack.routes[0]);
-          if (route) {
-            showRoute(map, route);
-            setActiveRoute(route.id);
-            const seq = pack.sequences.find((s) => s.id === a.sequence) ?? pack.sequences[0];
-            walkRef.current?.stop();
-            walkRef.current = startWalk(document.body, route, seq, () => setWalking(false));
-            setWalking(true);
-          }
-        }
-      }
-    },
-    [pack]
+  // ——— agent lifecycle (rebuilt per area + per memory revision) ———
+  const agentCtx = useMemo(
+    () => ({
+      getPack: () => packRef.current,
+      locale: () => localeRef.current,
+      ui: {
+        focusPlace(p: Place) {
+          mapRef.current?.focusPlace(p, () => setPlace(p));
+        },
+        openPlaceCard(p: Place) {
+          setPlace(p);
+        },
+        filterKinds(kinds: string[] | null) {
+          mapRef.current?.filterKinds(kinds);
+        },
+        showRoute(route: WalkRoute | null) {
+          mapRef.current?.showRoute(route);
+        },
+        startWalk(route: WalkRoute) {
+          void beginWalk(route);
+        },
+        setTimeOfDay(phase: TimePhase) {
+          const hour = TOD_STOPS.find((s) => s.label.toLowerCase() === phase)?.hour ?? 18.5;
+          mapRef.current?.setHour(hour);
+          setTod(hour);
+        },
+        clearView() {
+          mapRef.current?.filterKinds(null);
+          mapRef.current?.showRoute(null);
+          mapRef.current?.clearFocus();
+          setPlace(null);
+          setActiveKindGroup(null);
+        },
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || !area || streaming) return;
-    setInput("");
-    setStreaming(true);
-    setTab("chat");
-    const userMsg: ChatMessage = { role: "user", content: text };
-    const nextHistory = [...history, userMsg];
-    setHistory(nextHistory);
-    let acc = "";
-    try {
-      const res = await sendMessage(text, history, profile, area, (t) => {
-        acc += t;
+  useEffect(() => {
+    if (view !== "explore") return;
+    let alive = true;
+    setAgentError(null);
+    import("./agent/runtime")
+      .then(({ createNiyvaruAgent }) => createNiyvaruAgent(agentCtx, pack))
+      .then((a) => {
+        if (alive) setAgent(a);
+      })
+      .catch((e) => {
+        if (alive) setAgentError(String((e as Error).message ?? e));
       });
-      const assistant: ChatMessage = { role: "assistant", content: res.text || acc };
-      const merged = [...nextHistory, assistant];
-      setHistory(merged);
-      saveHistory(merged);
-      runActions(res.actions);
-      // Memory study: run after the answer so it never blocks the reply.
-      extractMemory(merged, profile)
-        .then((p) => {
-          setProfile(p);
-          saveProfile(p);
-        })
-        .catch(() => {});
-    } catch (e) {
-      const assistant: ChatMessage = { role: "assistant", content: `⚠ ${String(e)}` };
-      const merged = [...nextHistory, assistant];
-      setHistory(merged);
-      saveHistory(merged);
-    } finally {
-      setStreaming(false);
-    }
-  }, [area, history, input, profile, runActions, streaming]);
-
-  const addPost = useCallback((body: string, mood: string) => {
-    if (!body.trim()) return;
-    const post: Post = {
-      id: `p-${Date.now()}`,
-      area: pack?.id ?? DEFAULT_AREA,
-      place_name: pack?.name,
-      body: body.trim(),
-      mood,
-      created_at: new Date().toISOString(),
+    return () => {
+      alive = false;
     };
-    setPosts((prev) => {
-      const next = [post, ...prev].slice(0, 50);
-      localStorage.setItem(POSTS_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, [pack]);
+  }, [view, pack, memoryRev, agentCtx, locale]);
 
-  const updateProfile = useCallback((patch: Partial<Profile>) => {
-    setProfile((prev) => {
-      const next = { ...prev, ...patch, version: 1 as const };
-      saveProfile(next);
-      return next;
-    });
-  }, []);
+  const onTurnComplete = useCallback(
+    (userText: string, assistantText: string): void => {
+      void addChatMessage("user", userText);
+      void addChatMessage("assistant", assistantText);
+      setMemoryRev((r) => r + 1);
+    },
+    []
+  );
 
-  const today = pack?.prayer?.[0];
-  const weather = pack?.weather?.[0];
+  // ——— walk ———
+  const beginWalk = useCallback(async (route: WalkRoute): Promise<void> => {
+    const api = mapRef.current;
+    if (!api) return;
+    setWalking(true);
+    walkRef.current?.stop();
+    try {
+      const frames = matchFramesToRoute(route, await fetchFramesForRoute(route));
+      walkRef.current = startWalk({
+        map: api,
+        route,
+        frames,
+        reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        labels: {
+          stop: d.walk.stop,
+          realFrames: (n: number) => d.walk.realFrames.replace("{n}", String(n)),
+          routeOnly: d.walk.routeOnly,
+        },
+        onEnd: () => setWalking(false),
+      });
+    } catch {
+      setWalking(false);
+      setNotice("walk imagery unavailable right now");
+    }
+  }, [d]);
+
+  const walkToPlace = useCallback(
+    async (target: Place): Promise<void> => {
+      const m = meta ?? (pack ? { lat: pack.center[0], lon: pack.center[1] } as AreaMeta : null);
+      if (!m) return;
+      setWalking(true);
+      try {
+        const route = await walkingRoute(`Walk to ${target.nameEn ?? target.name}`, [
+          [m.lat, m.lon],
+          [target.lat, target.lon],
+        ]);
+        mapRef.current?.showRoute(route, false);
+        await beginWalk(route);
+      } catch {
+        setWalking(false);
+        setNotice("no walking route found for that destination");
+      }
+    },
+    [meta, pack, beginWalk]
+  );
+
+  // ——— derived ———
+  const setKindGroup = (group: string | null): void => {
+    setActiveKindGroup(group);
+    mapRef.current?.filterKinds(group ? KIND_GROUPS[group] ?? null : null);
+  };
+  const applyTod = (hour: number): void => {
+    setTod(hour);
+    mapRef.current?.setHour(hour);
+  };
+  const lookupPlace = (id: string): Place | undefined => pack?.places.find((p) => p.id === id);
 
   return (
     <div className="app">
-      <div ref={mapEl} className="map" />
+      <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">ن</span>
-          <div>
-            <div className="brand-name">Niyvaru</div>
-            <div className="brand-sub">{pack ? `${pack.name} · ${pack.pois.length} places` : "loading area…"}</div>
-          </div>
-        </div>
-        <div className="topbar-right">
-          {today && <span className="pill">🕌 {today.maghrib} Maghrib</span>}
-          {weather && <span className="pill">☀ {weather.temp_max_c}°C</span>}
-          {pack && <span className="pill">v{pack.version.slice(0, 10)}</span>}
-          <span className="pill">{DIRECT_MODE ? "direct" : "worker"}</span>
-        </div>
-      </header>
+      {view === "welcome" ? (
+        <Welcome d={d} onPick={pickArea} />
+      ) : null}
 
-      {notice && (
-        <div className="notice" onClick={() => setNotice("")}>
-          {notice}
-        </div>
-      )}
+      {view === "assembling" && meta ? (
+        <Assembling
+          d={d}
+          areaName={meta.name}
+          stages={stages}
+          hero={hero}
+          revealing={revealing}
+          onEnter={() => {
+            setView("explore");
+            if (!localStorage.getItem("niyvaru.intake.done")) setShowIntake(true);
+          }}
+        />
+      ) : null}
 
-      <aside className="panel">
-        <nav className="tabs">
-          <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>Walk</button>
-          <button className={tab === "feed" ? "active" : ""} onClick={() => setTab("feed")}>Feed</button>
-          <button className={tab === "ops" ? "active" : ""} onClick={() => setTab("ops")}>Ops</button>
-        </nav>
-
-        {tab === "chat" && (
-          <div className="chat">
-            <div className="chat-log">
-              {history.length === 0 && (
-                <div className="hint">
-                  <p><strong>Niyvaru</strong> walks Makkah with you. Try:</p>
-                  <ul>
-                    <li>“Walk me to a pharmacy near the Haram”</li>
-                    <li>“A quiet hotel under $150 with an accessible entrance”</li>
-                    <li>“What’s happening around me right now?”</li>
-                  </ul>
+      {view === "explore" ? (
+        <>
+          <header className="topbar">
+            <div className="brand">
+              <span className="brand-mark">ن</span>
+              <div>
+                <div className="brand-name">{d.brand.name}</div>
+                <div className="brand-sub">
+                  {meta?.name ?? ""}
+                  {pack ? ` · ${pack.places.length}` : ""}
                 </div>
-              )}
-              {history.map((m, i) => (
-                <div key={i} className={`msg ${m.role}`}>
-                  {m.role === "assistant" ? <span className="avatar">ن</span> : null}
-                  <div className="bubble">{m.content}</div>
-                </div>
-              ))}
-              {streaming && <div className="msg assistant"><span className="avatar">ن</span><div className="bubble typing">walking through the data…</div></div>}
+              </div>
             </div>
-            <div className="chat-input">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="Ask Niyvaru…"
-              />
-              <button onClick={send} disabled={streaming || !input.trim()}>Send</button>
+            <div className="topbar-actions">
+              <div className="tod" role="group" aria-label={d.explore.timeOfDay.day}>
+                <div className="tod-readout">
+                  <span className="tod-clock">{todClock(tod)}</span>
+                  <span className="tod-phase">· {nearestStop(tod).label}</span>
+                </div>
+                <input
+                  className="tod-slider"
+                  type="range"
+                  min={0}
+                  max={24}
+                  step={0.1}
+                  value={tod}
+                  onChange={(e) => applyTod(Number(e.target.value))}
+                  aria-label={d.explore.timeOfDay.day}
+                />
+                <div className="tod-stops">
+                  {TOD_STOPS.map((stop) => (
+                    <button key={stop.label} data-active={nearestStop(tod).label === stop.label && Math.abs(tod - stop.hour) < 0.15} onClick={() => applyTod(stop.hour)}>
+                      {stop.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="lang">
+                <select
+                  className="lang-select"
+                  value={locale}
+                  onChange={(e) => setLocaleState(e.target.value as Locale)}
+                  aria-label="Language / اللغة"
+                >
+                  <option value="en">English</option>
+                  <option value="ar">العربية</option>
+                </select>
+              </div>
+              <button className="chip" onClick={() => setShowIntake(true)} aria-label={d.intake.title}>
+                ✎
+              </button>
+              <button className="chip" onClick={() => setTab("memory")} aria-label={d.memory.title}>
+                🧠
+              </button>
+              <button className="chip" onClick={() => { setView("welcome"); setMeta(null); setPack(null); }} aria-label="change area">
+                ⟲
+              </button>
             </div>
-          </div>
-        )}
+          </header>
 
-        {tab === "feed" && (
-          <div className="feed">
-            <section className="card">
-              <h3>Now</h3>
-              {today && <p>Fajr {today.fajr} · Dhuhr {today.dhuhr} · Asr {today.asr} · Maghrib {today.maghrib} · Isha {today.isha}</p>}
-              {weather && <p>{weather.temp_max_c}°C / {weather.temp_min_c}°C · rain {weather.precipitation_mm} mm · wind {weather.wind_max_kmh} km/h</p>}
-              <p className="muted">{pack?.events?.length ? pack.events.map((e) => e.title).join(" · ") : "No reported events in this area."}</p>
-            </section>
-            <section className="card">
-              <h3>Near you</h3>
-              <div className="post-form">
-                <input id="post-body" placeholder="Share what you see…" />
-                <div className="post-row">
-                  <select id="post-mood">
-                    <option value="calm">calm</option>
-                    <option value="busy">busy</option>
-                    <option value="open late">open late</option>
-                    <option value="accessible">accessible</option>
-                  </select>
-                  <button onClick={() => {
-                    const body = (document.getElementById("post-body") as HTMLInputElement).value;
-                    const mood = (document.getElementById("post-mood") as HTMLSelectElement).value;
-                    addPost(body, mood);
-                    (document.getElementById("post-body") as HTMLInputElement).value = "";
-                  }}>Post</button>
-                </div>
-              </div>
-              {posts.map((p) => (
-                <div key={p.id} className="post">
-                  <div className="post-head"><span className={`mood ${p.mood}`}>{p.mood}</span><span>{p.place_name ?? p.area}</span></div>
-                  <div>{p.body}</div>
-                  <div className="muted">{new Date(p.created_at).toLocaleString()}</div>
-                </div>
-              ))}
-            </section>
-          </div>
-        )}
+          {notice ? (
+            <div className="notice" onClick={() => setNotice("")}>
+              {notice}
+            </div>
+          ) : null}
 
-        {tab === "ops" && (
-          <div className="ops">
-            <section className="card">
-              <h3>Client memory</h3>
-              <pre className="memory">{profileToText(profile)}</pre>
-              <div className="ops-grid">
-                <label>Mobility
-                  <select value={profile.mobility ?? ""} onChange={(e) => updateProfile({ mobility: (e.target.value || undefined) as Profile["mobility"] })}>
-                    <option value="">unknown</option>
-                    <option value="none">none</option>
-                    <option value="limited">limited</option>
-                    <option value="wheelchair">wheelchair</option>
-                  </select>
-                </label>
-                <label>Budget $/night
-                  <input type="number" value={profile.budget_usd_per_night ?? ""} onChange={(e) => updateProfile({ budget_usd_per_night: e.target.value ? Number(e.target.value) : undefined })} />
-                </label>
-                <label>Preferences <input value={profile.preferences.join(", ")} onChange={(e) => updateProfile({ preferences: split(e.target.value) })} /></label>
-                <label>Constraints <input value={profile.constraints.join(", ")} onChange={(e) => updateProfile({ constraints: split(e.target.value) })} /></label>
-                <label>Interests <input value={profile.interests.join(", ")} onChange={(e) => updateProfile({ interests: split(e.target.value) })} /></label>
-              </div>
-              <div className="ops-actions">
-                <button onClick={() => { clearMemory(); setProfile(defaultProfile()); setHistory([]); }}>Clear memory</button>
-                <span className="muted">Area pack {pack?.version ?? "—"} · {pack?.generated_at?.slice(0, 10) ?? ""}</span>
-              </div>
-            </section>
-            <section className="card">
-              <h3>Routes</h3>
-              {pack?.routes.map((r: WalkRoute) => (
-                <div key={r.id} className="route-row">
-                  <span>{r.name} · {r.distance_m} m · {Math.round(r.duration_s / 60)} min</span>
-                  <button onClick={() => { runActions([{ action: "show_route", id: r.id }]); }}>Show</button>
-                </div>
+          <aside className="panel">
+            <nav className="panel-tabs">
+              {(["explore", "pulse", "brief"] as Tab[]).map((key) => (
+                <button key={key} data-active={tab === key} onClick={() => setTab(key)}>
+                  {d.tabs[key]}
+                </button>
               ))}
-              {activeRoute && walking && <p className="muted">Walk playing — stop it from the map overlay.</p>}
-            </section>
-          </div>
-        )}
-      </aside>
+            </nav>
+            <div className="panel-body">
+              {tab === "explore" ? (
+                <>
+                  {place ? (
+                    <PlaceCard
+                      d={d}
+                      place={place}
+                      walking={walking}
+                      onWalk={(p) => void walkToPlace(p)}
+                      onClose={() => {
+                        setPlace(null);
+                        mapRef.current?.clearFocus();
+                      }}
+                    />
+                  ) : null}
+                  <div className="chat-suggestions">
+                    <button className="chip" data-selected={activeKindGroup === null} onClick={() => setKindGroup(null)}>
+                      {d.explore.layers.all}
+                    </button>
+                    {["hotels", "pharmacy", "food", "worship", "shops", "health", "money", "heritage", "green"].map((group) =>
+                      KIND_GROUPS[group] ? (
+                        <button key={group} className="chip" data-selected={activeKindGroup === group} onClick={() => setKindGroup(group)}>
+                          {(d.explore.layers as Record<string, string>)[group] ?? group}
+                        </button>
+                      ) : null
+                    )}
+                  </div>
+                  {agent ? (
+                    <ChatPanel
+                      d={d}
+                      agent={agent}
+                      greeting={d.explore.greeting}
+                      suggestions={[...d.explore.suggestions]}
+                      chatLabel={d.a11y.chatLabel}
+                      onTurnComplete={onTurnComplete}
+                    />
+                  ) : (
+                    <p className="muted">
+                      {agentError ?? d.common.loading}
+                    </p>
+                  )}
+                </>
+              ) : null}
+              {tab === "pulse" && pack ? <PulsePanel d={d} meta={meta ?? ({ id: pack.id, name: pack.name, lat: pack.center[0], lon: pack.center[1], radiusM: pack.radiusM, feeds: pack.feeds } as AreaMeta)} pack={pack} /> : null}
+              {tab === "brief" && pack ? <BriefPanel d={d} pack={pack} /> : null}
+              {tab === "memory" ? <MemoryPanel d={d} /> : null}
+            </div>
+          </aside>
+        </>
+      ) : null}
+
+      {showIntake && view === "explore" ? (
+        <Intake
+          d={d}
+          area={meta}
+          areas={areas}
+          locale={locale}
+          onPickArea={pickArea}
+          onClose={() => {
+            setShowIntake(false);
+            localStorage.setItem("niyvaru.intake.done", "1");
+            setMemoryRev((r) => r + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-function split(s: string): string[] {
-  return s.split(",").map((x) => x.trim()).filter(Boolean);
-}
+export type { StageKey, StageState, StageUpdate };

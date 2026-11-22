@@ -8,3 +8,7 @@ GATEWAY_URL = "https://api.kiri.ng"
 
 [observability]
 enabled = true
+redact_query_string = true
+
+[placement]
+mode = "smart"

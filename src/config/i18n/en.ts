@@ -1,0 +1,143 @@
+export const en = {
+  dir: "ltr",
+  locale: "en",
+  labelLang: "en",
+
+  brand: { name: "Niyvaru", tagline: "Feel the place before you book it" },
+
+  welcome: {
+    eyebrow: "Niyvaru",
+    title: "Where would you like to stand?",
+    lede: "Search any city on Earth. Niyvaru downloads the real place — streets, buildings, photographs, what's around — and walks you through it.",
+    searchPlaceholder: "Search any city or neighbourhood…",
+    featured: "Featured",
+    searching: "Searching…",
+    noResults: "Nothing found. Try another spelling?",
+    choose: "Explore",
+    hint: "Try “Lagos”, “Makkah”, “New York”, “Istanbul”…",
+  },
+
+  assembling: {
+    title: "Assembling {area}",
+    steps: {
+      places: "Streets & places",
+      photos: "Photographs",
+      story: "The story of the place",
+      routes: "Walking routes",
+      pulse: "What's happening",
+    },
+    ready: "Ready",
+    failed: "unavailable right now",
+    enter: "Step in",
+  },
+
+  tabs: { explore: "Explore", pulse: "Now", brief: "Story", memory: "Memory" },
+
+  explore: {
+    askPlaceholder: "Ask about this place…",
+    send: "Send",
+    thinking: "reading the place…",
+    greeting: "Tell me who's travelling and what matters — I'll walk you through it.",
+    suggestions: [
+      "Walk me to a pharmacy near here",
+      "Somewhere quiet for an elderly parent",
+      "What's happening here right now?",
+    ],
+    focus: "Show me",
+    walk: "Walk there",
+    timeOfDay: { dawn: "Dawn", day: "Day", golden: "Golden", night: "Night" },
+    layers: { hotels: "Hotels", pharmacy: "Pharmacies", food: "Food", worship: "Worship", shops: "Shops", health: "Health", money: "Money", heritage: "Heritage", green: "Parks", all: "Everything" },
+  },
+
+  walk: {
+    stop: "Stop",
+    realFrames: "{n} real street photographs on this route",
+    routeOnly: "No street photographs cover this route yet — flying it instead",
+    stepFree: "step-free",
+    of: "of",
+  },
+
+  pulse: {
+    title: "Right now in {area}",
+    empty: "Quiet at the moment.",
+    share: "Share what you see…",
+    post: "Post",
+    you: "You",
+    sources: { gdelt: "News", bluesky: "Bluesky", mastodon: "Mastodon", wikipedia: "Wikipedia", local: "Travellers", weather: "Weather", prayer: "Prayer times", promotions: "Sponsored" },
+  },
+
+  brief: {
+    title: "The story of {area}",
+    from: "From {source}",
+    facts: "At a glance",
+  },
+
+  memory: {
+    title: "What Niyvaru remembers about you",
+    lede: "Everything lives on this device — never on a server. The agent reads and edits these files itself as it learns.",
+    export: "Export",
+    import: "Import",
+    clear: "Clear everything",
+    files: "Memory files",
+    edited: "edited {when}",
+    confirmClear: "Erase all memory on this device?",
+    install: "Install Niyvaru on this device so your memory survives browser cleaning",
+  },
+
+  intake: {
+    eyebrow: "Begin",
+    title: "Tell us what you need",
+    lede: "Free, private and no obligation. Niyvaru assembles the real place and walks you through it.",
+    sectionStay: "Your stay",
+    sectionDetails: "Your details",
+    area: "Where are you staying?",
+    checkin: "Check-in",
+    checkout: "Check-out",
+    flexible: "My dates are flexible ± 2 days",
+    flexibleHint: "Flexibility often unlocks a better rate",
+    party: "Who is staying?",
+    adults: "Adults",
+    children: "Children",
+    rooms: "Rooms",
+    fewer: "Fewer",
+    more: "More",
+    standard: "Hotel standard",
+    proximity: "How close do you want to be?",
+    proximityOptions: {
+      courtyard: { label: "Courtyard, zero-metre", hint: "Step out onto the plaza" },
+      within500: { label: "Within 500 m", hint: "Around a 5–7 minute walk" },
+      shuttle: { label: "Shuttle-friendly", hint: "Best value, reliable shuttle" },
+    },
+    standardOptions: { star3: "3★", star4: "4★", star5: "5★", any: "Any" },
+    breakfast: "Breakfast preference",
+    breakfastOptions: { included: "Included", preferred: "Preferred", roomOnly: "Room only" },
+    accessibility: "Accessibility",
+    elderly: { label: "Travelling with elderly", hint: "Short walks, easy lifts" },
+    wheelchair: { label: "Wheelchair step-free", hint: "Step-free route to the gate" },
+    interests: "What matters to you",
+    interestOptions: { calm: "Quiet & calm", food: "Food", heritage: "Heritage", nature: "Nature", shopping: "Shopping", family: "Family-friendly" },
+    name: "Name (optional)",
+    datesRequired: "Please add your check-in and check-out dates.",
+    cta: "Begin exploring",
+    privacy: "Your answers are saved on this device only — they teach your concierge what matters. No account, no server.",
+  },
+
+
+  common: {
+    loading: "Loading…",
+    retry: "Retry",
+    close: "Close",
+    m: "m",
+    min: "min",
+    openNow: "Open now",
+    closed: "Closed",
+    hoursUnknown: "Hours unknown",
+    wheelchairYes: "Step-free entrance",
+    photos: "Photos",
+    kmAway: "{d} m away",
+  },
+
+  a11y: { mapLabel: "Map of {area}", chatLabel: "Conversation with Niyvaru" },
+};
+
+export type Dictionary = typeof en;
