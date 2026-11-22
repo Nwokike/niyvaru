@@ -171,7 +171,11 @@ export function Intake({
   };
 
   return (
-    <div className="request-panel panel-card grain" role="dialog" aria-label={d.intake.title}>
+    <div className="request-panel" role="dialog" aria-label={d.intake.title}>
+      {!area ? (
+        <img className="request-hero" src="/brand/hero-makkah.png" alt="" />
+      ) : null}
+      <div className="request-content">
       <div className="eyebrow">{d.intake.eyebrow}</div>
       <h2 className="display request-title">{d.intake.title}</h2>
       <p className="muted" style={{ marginTop: "0.4rem" }}>{d.intake.lede}</p>
@@ -356,8 +360,7 @@ export function Intake({
         {d.intake.cta}
       </button>
       <p className="muted request-privacy">{d.intake.privacy}</p>
-
-
+      </div>
     </div>
   );
 }
