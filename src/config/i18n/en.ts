@@ -31,7 +31,7 @@ export const en = {
     enter: "Step in",
   },
 
-  tabs: { explore: "Explore", pulse: "Now", brief: "Story", memory: "Memory" },
+  tabs: { explore: "Explore", pulse: "Happening", brief: "Story", memory: "Memory" },
 
   explore: {
     askPlaceholder: "Ask about this place…",
@@ -85,6 +85,15 @@ export const en = {
   },
 
   intake: {
+    heroEyebrow: "Private Umrah hotel concierge · Makkah & Madinah",
+    heroTitle: "Five-Star Makkah & Madinah Hotels.",
+    heroTitleHighlight: "Wholesale rates you can’t get on Booking.com.",
+    heroLede: "Tell us your dates, family requirements, and walking distance to the Haram. We verify private wholesale inventory, split the savings with you, and send a tailored 3-hotel proposal within 24 hours.",
+    perks: [
+      { title: "Your stay, privately", desc: "Never a group tour" },
+      { title: "50/50 savings", desc: "Below public retail" },
+      { title: "Within 24 hours", desc: "Proposal on WhatsApp" },
+    ],
     eyebrow: "Begin",
     title: "Tell us what you need",
     lede: "Free, private and no obligation. Niyvaru assembles the real place and walks you through it.",

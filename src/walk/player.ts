@@ -59,7 +59,7 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
   layerB.alt = "";
   layerA.style.opacity = "0";
   layerB.style.opacity = "0";
-  media.append(layerA, layerB, Object.assign(document.createElement("div"), { className: "walk-scrim" }));
+  media.append(layerA, layerB);
 
   const hud = document.createElement("div");
   hud.className = "walk-hud";
@@ -160,12 +160,25 @@ export function startWalk(options: WalkOptions): WalkHandle {
   }
 
   // — Full playback: crossfaded real photographs along the walked distance —
+  const coords = route.coordinates;
   let lastFrameIdx = -1;
   const tick = (): void => {
     if (stopped) return;
     const elapsed = (performance.now() - start) / 1000;
     const t = Math.min(1, elapsed / demoSeconds);
     const walkedM = route.distanceM * t;
+
+    // Glide the 3D map camera smoothly along the street
+    if (coords.length > 0) {
+      const idx = Math.min(coords.length - 1, Math.floor(t * (coords.length - 1)));
+      const [lon, lat] = coords[idx];
+      const nextIdx = Math.min(coords.length - 1, idx + 1);
+      const [nLon, nLat] = coords[nextIdx];
+      const dLon = nLon - lon;
+      const dLat = nLat - lat;
+      const bearing = dLon !== 0 || dLat !== 0 ? (Math.atan2(dLon, dLat) * 180) / Math.PI : -15;
+      map.map.jumpTo({ center: [lon, lat], zoom: 17.2, pitch: 60, bearing });
+    }
 
     let frameIdx = 0;
     for (let i = 0; i < frames.length; i++) {

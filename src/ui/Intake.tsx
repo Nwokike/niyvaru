@@ -2,14 +2,15 @@ import { useState } from "react";
 import type { Dictionary } from "../config/i18n";
 import { writeFile } from "../memory/store";
 import { searchAreas } from "../area/store";
+import { BASE_URL } from "../config/endpoints";
 import type { AreaMeta } from "../sources/types";
 
 /**
- * The request form — a faithful copy of the original niyvaru.eu form
- * (one page, "1 Your stay / 2 Your details", chips, steppers, toggle-cards),
- * with the concierge improvements layered on top. The map stays visible
- * behind the panel. Everything the traveller answers is written straight
- * into the agent's memory files.
+ * The request form — a faithful editorial implementation of the original
+ * niyvaru.eu layout (warm paper, Clock Tower watermark, 2-column hero, value
+ * props, and the glass concierge card).
+ * City-neutral: any city on Earth can be searched or selected.
+ * Everything the traveller answers writes directly into the agent's memory.
  */
 
 type Standard = "star3" | "star4" | "star5" | "any";
@@ -120,15 +121,15 @@ export function Intake({
   const [wheelchair, setWheelchair] = useState(false);
   const [interests, setInterests] = useState<string[]>([]);
   const [name, setName] = useState("");
-  const [showWarning, setShowDatesWarning] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
 
+  const isHomepage = !area;
+
   const finish = async (): Promise<void> => {
     const language = locale === "ar" ? "Arabic" : "English";
-    // A typed-but-unpicked search counts as the selection too — the button
-    // must never be a dead end just because a chip wasn't clicked.
     let current = areas.find((a) => a.id === stay) ?? area ?? searchResults?.[0] ?? null;
     if (!current && search.trim().length >= 2) {
       try {
@@ -138,7 +139,7 @@ export function Intake({
       }
     }
     if (!current) {
-      setShowDatesWarning(true);
+      setShowWarning(true);
       return;
     }
     try {
@@ -179,12 +180,8 @@ export function Intake({
     void finish();
   };
 
-  return (
-    <div className="request-panel" role="dialog" aria-label={d.intake.title}>
-      {!area ? (
-        <img className="request-hero" src="/brand/hero-makkah.png" alt="" />
-      ) : null}
-      <div className="request-content">
+  const formContent = (
+    <div className="request-content">
       <div className="eyebrow">{d.intake.eyebrow}</div>
       <h2 className="display request-title">{d.intake.title}</h2>
       <p className="muted" style={{ marginTop: "0.4rem" }}>{d.intake.lede}</p>
@@ -369,6 +366,81 @@ export function Intake({
         {d.intake.cta}
       </button>
       <p className="muted request-privacy">{d.intake.privacy}</p>
+    </div>
+  );
+
+  if (isHomepage) {
+    return (
+      <div className="home-layout" role="main">
+        <div
+          className="home-watermark"
+          style={{ backgroundImage: `url(${BASE_URL}brand/hero-makkah.png)` }}
+          aria-hidden="true"
+        />
+        <div className="home-container">
+          <div className="home-editorial rise">
+            <p className="eyebrow home-eyebrow">{d.intake.heroEyebrow}</p>
+            <h1 className="home-title">
+              {d.intake.heroTitle}{" "}
+              <span className="home-title-highlight">{d.intake.heroTitleHighlight}</span>
+            </h1>
+            <p className="home-lede">{d.intake.heroLede}</p>
+            <ul className="home-perks">
+              <li className="home-perk">
+                <span className="home-perk-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="8" r="5" />
+                    <path d="M20 21a8 8 0 0 0-16 0" />
+                  </svg>
+                </span>
+                <div>
+                  <span className="home-perk-title">{d.intake.perks[0].title}</span>
+                  <span className="home-perk-desc">{d.intake.perks[0].desc}</span>
+                </div>
+              </li>
+              <li className="home-perk">
+                <span className="home-perk-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
+                    <path d="m15 9-6 6" />
+                    <path d="M9 9h.01" />
+                    <path d="M15 15h.01" />
+                  </svg>
+                </span>
+                <div>
+                  <span className="home-perk-title">{d.intake.perks[1].title}</span>
+                  <span className="home-perk-desc">{d.intake.perks[1].desc}</span>
+                </div>
+              </li>
+              <li className="home-perk">
+                <span className="home-perk-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 6v6l4 2" />
+                  </svg>
+                </span>
+                <div>
+                  <span className="home-perk-title">{d.intake.perks[2].title}</span>
+                  <span className="home-perk-desc">{d.intake.perks[2].desc}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+          <div className="request-card rise" role="dialog" aria-label={d.intake.title}>
+            {formContent}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="request-modal-overlay">
+      <div className="request-panel request-panel-modal" role="dialog" aria-label={d.intake.title}>
+        <button type="button" className="request-close" onClick={() => onClose(area)} aria-label={d.common.close}>
+          ✕
+        </button>
+        {formContent}
       </div>
     </div>
   );

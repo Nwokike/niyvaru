@@ -13,6 +13,7 @@ import { dict, applyDocumentLocale, type Locale } from "./config/i18n";
 import { Assembling } from "./ui/Assembling";
 import { Intake } from "./ui/Intake";
 import { PlaceCard } from "./ui/PlaceCard";
+import { DiscoverDossier } from "./ui/DiscoverDossier";
 import { PulsePanel } from "./ui/PulsePanel";
 import { BriefPanel } from "./ui/BriefPanel";
 import { MemoryPanel } from "./ui/MemoryPanel";
@@ -85,6 +86,32 @@ export function App() {
   const [memoryRev, setMemoryRev] = useState(0);
   const [notice, setNotice] = useState("");
   const [areas, setAreas] = useState<AreaMeta[]>([]);
+  const [discoverIndex, setDiscoverIndex] = useState(0);
+
+  const discoverPlaces = useMemo(() => {
+    if (!pack) return [];
+    if (activeKindGroup) {
+      const allowed = new Set(KIND_GROUPS[activeKindGroup] ?? []);
+      return pack.places.filter((p) => allowed.has(p.kind));
+    }
+    const withStory = pack.places.filter((p) => p.story || p.photos.length > 0);
+    if (withStory.length >= 6) return withStory;
+    return pack.places.slice(0, 30);
+  }, [pack, activeKindGroup]);
+
+  const selectDiscoverIndex = useCallback(
+    (idx: number) => {
+      if (!discoverPlaces.length) return;
+      const clamped = Math.max(0, Math.min(discoverPlaces.length - 1, idx));
+      setDiscoverIndex(clamped);
+      const target = discoverPlaces[clamped];
+      if (target) {
+        setPlace(target);
+        mapRef.current?.focusPlace(target, () => setPlace(target));
+      }
+    },
+    [discoverPlaces]
+  );
 
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapApi | null>(null);
@@ -94,6 +121,8 @@ export function App() {
   packRef.current = pack;
   const localeRef = useRef<Locale>(locale);
   localeRef.current = locale;
+  const discoverPlacesRef = useRef(discoverPlaces);
+  discoverPlacesRef.current = discoverPlaces;
 
   // persistence + locale side effects
   useEffect(() => {
@@ -190,6 +219,8 @@ export function App() {
           (p) => {
             setPlace(p);
             api.focusPlace(p, () => setPlace(p));
+            const foundIdx = discoverPlacesRef.current.findIndex((x) => x.id === p.id);
+            if (foundIdx >= 0) setDiscoverIndex(foundIdx);
           },
           (id) => packRef.current?.places.find((x) => x.id === id)
         );
@@ -326,6 +357,16 @@ export function App() {
   const setKindGroup = (group: string | null): void => {
     setActiveKindGroup(group);
     mapRef.current?.filterKinds(group ? KIND_GROUPS[group] ?? null : null);
+    setDiscoverIndex(0);
+    if (pack) {
+      const filtered = group
+        ? pack.places.filter((p) => (KIND_GROUPS[group] ?? []).includes(p.kind))
+        : pack.places;
+      if (filtered[0]) {
+        setPlace(filtered[0]);
+        mapRef.current?.focusPlace(filtered[0], () => setPlace(filtered[0]));
+      }
+    }
   };
   const applyTod = (hour: number): void => {
     setTod(hour);
@@ -367,6 +408,18 @@ export function App() {
                 </div>
               </div>
             </div>
+            {pack ? (
+              <button
+                type="button"
+                className="ambient-pill chip"
+                onClick={() => setTab("pulse")}
+                title={d.tabs.pulse}
+              >
+                {pack.weather[0] ? `🌤 ${pack.weather[0].tempMaxC}°C ` : ""}
+                {pack.prayer[0] ? `· 🕌 ${pack.prayer[0].asr ? `Asr ${pack.prayer[0].asr}` : pack.prayer[0].date} ` : ""}
+                · {nearestStop(tod).label}
+              </button>
+            ) : null}
             <div className="topbar-actions">
               <div className="tod" role="group" aria-label={d.explore.timeOfDay.day}>
                 <div className="tod-readout">
@@ -431,7 +484,20 @@ export function App() {
             <div className="panel-body">
               {tab === "explore" ? (
                 <>
-                  {place ? (
+                  {discoverPlaces.length > 0 && place ? (
+                    <DiscoverDossier
+                      d={d}
+                      places={discoverPlaces}
+                      currentIndex={discoverIndex}
+                      onSelectIndex={selectDiscoverIndex}
+                      walking={walking}
+                      onWalk={(p) => void walkToPlace(p)}
+                      onClose={() => {
+                        setPlace(null);
+                        mapRef.current?.clearFocus();
+                      }}
+                    />
+                  ) : place ? (
                     <PlaceCard
                       d={d}
                       place={place}
@@ -442,6 +508,19 @@ export function App() {
                         mapRef.current?.clearFocus();
                       }}
                     />
+                  ) : discoverPlaces[0] ? (
+                    <div
+                      className="discover-preview rise"
+                      onClick={() => selectDiscoverIndex(0)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && selectDiscoverIndex(0)}
+                    >
+                      <span className="eyebrow">{d.tabs.brief} · {discoverPlaces.length} {d.welcome.featured.toLowerCase()}</span>
+                      <h4 className="discover-preview-title">
+                        {discoverPlaces[0].nameEn ?? discoverPlaces[0].name} →
+                      </h4>
+                    </div>
                   ) : null}
                   <div className="chat-suggestions">
                     <button className="chip" data-selected={activeKindGroup === null} onClick={() => setKindGroup(null)}>
@@ -479,7 +558,7 @@ export function App() {
         </>
       ) : null}
 
-      {view === "form" ? (
+      {view === "form" || (showIntake && view === "explore") ? (
         <Intake
           d={d}
           area={meta}
@@ -490,7 +569,11 @@ export function App() {
             setShowIntake(false);
             localStorage.setItem("niyvaru.intake.done", "1");
             setMemoryRev((r) => r + 1);
-            if (chosen) startAssembly(chosen);
+            if (chosen) {
+              if (view === "form" || chosen.id !== meta?.id) {
+                startAssembly(chosen);
+              }
+            }
           }}
         />
       ) : null}
