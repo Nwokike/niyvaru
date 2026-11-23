@@ -66,11 +66,59 @@ function resolvePlace(pack: AreaPack, placeId: string): Place | undefined {
   return pack.places.find((p) => p.id === placeId);
 }
 
+/**
+ * Normalize tool arguments for cache/signature keys: trim strings and sort
+ * object keys so cosmetic JSON rewrites collapse onto one key. Array order is
+ * preserved — it can be meaningful (e.g. kind filter lists).
+ */
+export function normalizeToolArgs(value: unknown): unknown {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map(normalizeToolArgs);
+  if (value && typeof value === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = normalizeToolArgs((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
 export function createAgentTools(ctx: AgentContext) {
   const packNow = (): AreaPack => {
     const pack = ctx.getPack();
     if (!pack) throw new Error("the area is still assembling — try again in a moment");
     return pack;
+  };
+
+  // Closure-local dedupe cache for read-only tools. Repeating the same call
+  // (or the same call with cosmetically rewritten args) returns the earlier
+  // answer plus a note instead of hitting the data again. A fresh agent gets
+  // a fresh cache; nothing is shared across sessions or memory revisions.
+  const readCache = new Map<string, unknown>();
+  const CACHED_NOTE = "already retrieved — use the earlier result";
+  const cacheKey = (name: string, args: unknown): string =>
+    `${name}:${JSON.stringify(normalizeToolArgs(args))}`;
+  const cachedRead = async <Args, Result>(
+    name: string,
+    args: Args,
+    run: () => Promise<Result>
+  ): Promise<Result> => {
+    const key = cacheKey(name, args);
+    const prior = readCache.get(key);
+    if (prior !== undefined) {
+      if (prior && typeof prior === "object" && !Array.isArray(prior)) {
+        const existing = (prior as { note?: unknown }).note;
+        return {
+          ...prior,
+          note: [typeof existing === "string" ? existing : null, CACHED_NOTE].filter(Boolean).join("; "),
+        } as unknown as Result;
+      }
+      return { result: prior, note: CACHED_NOTE } as unknown as Result;
+    }
+    const result = await run();
+    readCache.set(key, result);
+    return result;
   };
 
   return {
@@ -83,17 +131,19 @@ export function createAgentTools(ctx: AgentContext) {
         limit: z.coerce.number().int().min(1).max(20).catch(8),
       }),
       execute: async ({ query, kind, limit }) => {
-        const pack = packNow();
-        const db = await placeIndex(pack);
-        const result = await search(db, {
-          term: query,
-          limit,
-          where: kind ? { kind: { eq: kind } } : undefined,
+        return cachedRead("search_places", { query, kind, limit }, async () => {
+          const pack = packNow();
+          const db = await placeIndex(pack);
+          const result = await search(db, {
+            term: query,
+            limit,
+            where: kind ? { kind: { eq: kind } } : undefined,
+          });
+          const ranked = result.hits
+            .map((h) => pack.places.find((p) => p.id === (h.document as { ref: string }).ref))
+            .filter((p): p is Place => Boolean(p));
+          return { count: ranked.length, places: ranked.map(compactPlace) };
         });
-        const ranked = result.hits
-          .map((h) => pack.places.find((p) => p.id === (h.document as { ref: string }).ref))
-          .filter((p): p is Place => Boolean(p));
-        return { count: ranked.length, places: ranked.map(compactPlace) };
       },
     }),
 
@@ -108,28 +158,30 @@ export function createAgentTools(ctx: AgentContext) {
         limit: z.coerce.number().int().min(1).max(20).catch(8),
       }),
       execute: async ({ anchorPlaceId, kinds, withinM, openNow, limit }) => {
-        const pack = packNow();
-        const anchor = anchorPlaceId ? resolvePlace(pack, anchorPlaceId) : undefined;
-        const lat = anchor?.lat ?? pack.center[0];
-        const lon = anchor?.lon ?? pack.center[1];
-        let candidates = pack.places
-          .filter((p) => (kinds?.length ? (kinds as string[]).includes(p.kind) : true))
-          .filter((p) => !anchor || p.id !== anchor.id);
-        if (openNow) {
-          candidates = candidates.filter(
-            (p) => p.tags.openingHours && openingHoursAt(p.tags.openingHours).state === "open"
-          );
-        }
-        const ranked = candidates
-          .map((p) => ({ place: p, distanceM: Math.round(haversine(lat, lon, p.lat, p.lon)) }))
-          .filter((x) => x.distanceM <= withinM)
-          .sort((a, b) => a.distanceM - b.distanceM)
-          .slice(0, limit);
-        return {
-          anchor: anchor ? anchor.name : "area centre",
-          count: ranked.length,
-          places: ranked.map((x) => ({ ...compactPlace(x.place), distanceM: x.distanceM })),
-        };
+        return cachedRead("nearby", { anchorPlaceId, kinds, withinM, openNow, limit }, async () => {
+          const pack = packNow();
+          const anchor = anchorPlaceId ? resolvePlace(pack, anchorPlaceId) : undefined;
+          const lat = anchor?.lat ?? pack.center[0];
+          const lon = anchor?.lon ?? pack.center[1];
+          let candidates = pack.places
+            .filter((p) => (kinds?.length ? (kinds as string[]).includes(p.kind) : true))
+            .filter((p) => !anchor || p.id !== anchor.id);
+          if (openNow) {
+            candidates = candidates.filter(
+              (p) => p.tags.openingHours && openingHoursAt(p.tags.openingHours).state === "open"
+            );
+          }
+          const ranked = candidates
+            .map((p) => ({ place: p, distanceM: Math.round(haversine(lat, lon, p.lat, p.lon)) }))
+            .filter((x) => x.distanceM <= withinM)
+            .sort((a, b) => a.distanceM - b.distanceM)
+            .slice(0, limit);
+          return {
+            anchor: anchor ? anchor.name : "area centre",
+            count: ranked.length,
+            places: ranked.map((x) => ({ ...compactPlace(x.place), distanceM: x.distanceM })),
+          };
+        });
       },
     }),
 
@@ -137,15 +189,17 @@ export function createAgentTools(ctx: AgentContext) {
       description: "Everything known about one place: hours, accessibility, contact, photos, story.",
       inputSchema: z.object({ placeId: z.string() }),
       execute: async ({ placeId }) => {
-        const pack = packNow();
-        const place = resolvePlace(pack, placeId);
-        if (!place) return { error: `unknown place id ${placeId}` };
-        return {
-          ...compactPlace(place),
-          addr: [place.tags.addrNumber, place.tags.addrStreet].filter(Boolean).join(" ") || undefined,
-          story: place.story?.extract?.slice(0, 500),
-          photos: place.photos.map((p) => ({ thumb: p.thumbUrl, attribution: p.attribution, license: p.license, source: p.source })),
-        };
+        return cachedRead("place_details", { placeId }, async () => {
+          const pack = packNow();
+          const place = resolvePlace(pack, placeId);
+          if (!place) return { error: `unknown place id ${placeId}` };
+          return {
+            ...compactPlace(place),
+            addr: [place.tags.addrNumber, place.tags.addrStreet].filter(Boolean).join(" ") || undefined,
+            story: place.story?.extract?.slice(0, 500),
+            photos: place.photos.map((p) => ({ thumb: p.thumbUrl, attribution: p.attribution, license: p.license, source: p.source })),
+          };
+        });
       },
     }),
 
@@ -264,6 +318,7 @@ export function createAgentTools(ctx: AgentContext) {
       description: "What's true right now: today's prayer times, today's weather, latest pulse items.",
       inputSchema: z.object({}),
       execute: async () => {
+        // Live data must never be served from the per-session dedupe cache.
         const pack = packNow();
         return {
           prayer: pack.prayer[0] ?? null,
@@ -277,10 +332,12 @@ export function createAgentTools(ctx: AgentContext) {
       description: "The encyclopedic story attached to a place (Wikipedia, in the area's language).",
       inputSchema: z.object({ placeId: z.string() }),
       execute: async ({ placeId }) => {
-        const pack = packNow();
-        const place = resolvePlace(pack, placeId);
-        if (!place) return { error: `unknown place id ${placeId}` };
-        return place.story ?? { note: "no story attached to this place" };
+        return cachedRead("get_place_story", { placeId }, async () => {
+          const pack = packNow();
+          const place = resolvePlace(pack, placeId);
+          if (!place) return { error: `unknown place id ${placeId}` };
+          return place.story ?? { note: "no story attached to this place" };
+        });
       },
     }),
 

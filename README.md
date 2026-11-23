@@ -1,146 +1,102 @@
 # Niyvaru
 
-A grounded travel companion for Makkah: a **social map** of real places, a
-**real street-level walk**, and an **agent** that drives the map from a
-client-side memory of the traveller.
+**Feel the place before you book it.** Niyvaru is a city-agnostic browser app that assembles a living, walkable map of **any city on Earth** at runtime from free, open data, then lets a private concierge drive that map from a memory of the traveller and the trip.
 
-This is a test prototype built on **100% free, keyless infrastructure** — no
-card, no metered API, no paid tier, no server to start. The web app is static
-and is published with **GitHub Pages**. By default the browser calls the Kiri
-Gateway directly (CORS is allowed); a Cloudflare Worker is available as an
-optional server-side mode for production.
+It is a static Vite + React + TypeScript app: no server to start, no database, no paid API. Production is GitHub Pages, built with `VITE_BASE=/niyvaru/` and served at `https://nwokike.github.io/niyvaru/`.
 
-- **Repo:** `Nwokike/niyvaru` (private), default branch `master`
-- **Stack:** Vite + React + TypeScript + MapLibre GL JS + Cloudflare Pages/Worker
-- **Runtime:** Node 24, npm 11 (CI pins Node 24)
+## What it does
 
-## Contents
-
-| Topic | Document |
-|---|---|
-| Architecture and request flow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Data packs, sources, refresh, adding a city | [docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md) |
-| Agent, gateway, client memory, action protocol | [docs/AI_AND_MEMORY.md](docs/AI_AND_MEMORY.md) |
-| GitHub Pages / Cloudflare, $0 deployment | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
-| Mobile: PWA / Capacitor / Tauri research | [docs/MOBILE.md](docs/MOBILE.md) |
-| Errors and gotchas | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
-| How to contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
-
-## What is in the prototype
-
-- **Social map:** 1,400+ real OpenStreetMap places around the Haram — hotels,
-  pharmacies, shops, mosques, ATMs, hospitals — with opening hours, phone,
-  website and wheelchair tags.
-- **Walk mode:** real Panoramax street-level frames played along a real OSRM
-  walking route, with distance, heading and a progress bar.
-- **Agent:** chat grounded *only* in the area data pack and client memory. It can
-  focus a place, highlight a kind of place, show a route, or start a walk.
-- **Client memory:** durable traveller facts (mobility, budget, preferences)
-  live in `localStorage`; a post-answer extraction pass merges new facts. No
-  user data is stored on a server.
-- **Feed:** prayer times, weather, NASA EONET events and local posts — the
-  "what is happening now" layer, with nothing fabricated.
-- **Ops:** inspect/edit the learned memory and see the routes.
+- **Search any city** with Photon (Nominatim fallback), or pick a featured area from `public/areas.json`. Areas are editorial data — no city names, feed queries or content are hardcoded in the application logic.
+- **Assembles the area at runtime** in `src/area/store.ts` and `src/sources/assemble.ts`: Overpass shards across mirrors (with the OSM map API in `src/sources/osmMap.ts` as a fallback) build the place set; Commons photos, Wikipedia stories, pedestrian routes, prayer times, weather and the pulse feed stream in parallel. Every stage reports live counts in the loader. Photos are matched to places by position and file title, with bounded galleries and full credits.
+- **Renders a time-aware map** with MapLibre GL JS v6 over OpenFreeMap Positron. `src/map/style.ts` regrades every basemap layer by hour (dawn, midday, golden, dusk, night), adds AWS Terrarium terrain and hillshade, builds 3D OSM extrusions, colours POI layers by kind and keeps the camera inside the area. The hour starts from the browser clock; the header slider overrides it. Low-power devices skip terrain and extrusion and show fewer POIs.
+- **Discover Dossier** steps through places with next/prev buttons, arrow keys, touch swipes and smooth 3D flights, showing up to three credited photographs, opening hours, accessibility and the place's Wikipedia story.
+- **Happening / Story / Memory tabs**: live pulse (MET Norway or Open-Meteo weather, locally computed prayer times, GDELT news, Bluesky stream, Mastodon posts, clearly labelled placements), the area story with full attribution, and an editable on-device memory directory with export/import.
+- **Walk mode** matches Panoramax and Mapillary frames to a real walking route and crossfades them in a non-blocking HUD with distance, ETA and pause/resume (space bar or button; Escape stops). Sparse imagery falls back to a smooth 3D camera glide; reduced-motion users get a photo strip.
+- **Concierge agent**: an AI SDK `ToolLoopAgent` with 16 typed tools over the Kiri Gateway's OpenAI-compatible endpoint. It can search places, focus or filter them, draw routes, start walks, change the time of day, report what is happening now and maintain its own memory files. Repeated read calls are deduplicated and a loop of identical tool calls stops the turn.
+- **PWA shell, i18n en/ar**: installable offline shell, language auto-detected from the browser on first visit, full Arabic layout (`dir=rtl`), with a saved language choice taking precedence.
 
 ## Quick start
 
 ```bash
-cd niyvaru
 npm install
-npm run data           # build public/packs/*.json
-npm run dev            # http://127.0.0.1:5173 — no API process needed
+cp .env.example .env      # optional: gateway URL, Mapillary token, Worker URL
+npm run dev               # http://127.0.0.1:5173
 ```
 
-Open <http://127.0.0.1:5173>. Chat works immediately: it uses the same shared
-family gateway credential as the other Kiri apps, embedded at build time. Users
-do not configure anything.
-
-Optional server-side mode: set `VITE_API_BASE=/api` and run `npm run api:dev`
-(or `npm run worker:dev`) with `worker/.dev.vars` configured.
+`npm run dev` needs no API process. Type-check and build with `npm run build` (`tsc -b` then `vite build`); `npm run preview` serves `dist/` locally.
 
 ## Scripts
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Vite dev server on :5173; proxies `/api` to `NIYVARU_API_TARGET` (default `http://127.0.0.1:8787`) |
-| `npm run build` | Type-check (`tsc -b`) and build static site into `dist/` |
-| `npm run preview` | Serve the built `dist/` locally |
-| `npm run data` | Regenerate all area packs from free sources |
-| `npm run api:dev` | Run the exact Worker handler in Node on :8787 |
-| `npm run worker:dev` | Run the Worker with `wrangler dev` |
-| `npm run worker:deploy` | Deploy the Worker to Cloudflare |
+| `npm run dev` | Vite dev server on `:5173`; proxies `/api` to `NIYVARU_API_TARGET` (default `http://127.0.0.1:8787`) |
+| `npm run build` | Type-check and build the static site into `dist/` |
+| `npm run preview` | Serve the built site locally |
+| `npm run api:dev` | Run the optional Worker handler in plain Node on `:8787` |
+| `npm run worker:dev` | Run the optional Worker with `wrangler dev` |
+| `npm run worker:deploy` | Deploy the optional Worker to Cloudflare |
 
 ## Repository map
 
 ```
-index.html                  app shell
+index.html                  app shell and metadata
+public/areas.json           featured areas (data, not code)
+public/manifest.webmanifest PWA manifest
+public/sw.js                offline shell service worker
+public/brand/               brand imagery and favicon
 src/
-  App.tsx                   UI: map, chat, feed, ops
-  config.ts                 API mode + gateway endpoints
-  agent.ts                  chat client, SSE parser, action parser, memory study
-  mapView.ts                MapLibre setup, POI/route layers, focus/highlight
-  memory.ts                 localStorage profile + transcript
-  packs.ts                  load packs on demand, cache in IndexedDB
-  walkPlayer.ts             real-frame walk playback
-  types.ts                  shared TypeScript types
-shared/                     code used by BOTH browser and Worker
-  facts.ts                  grounded context builder
-  profile.ts                profile text + sanitising model output
-  prompt.ts                 system prompt
-worker/src/index.ts         Cloudflare Worker: /api/health, /api/chat, /api/memory
-worker/wrangler.toml        Worker config (GATEWAY_URL var)
-data/build-data.mjs         free data pipeline -> public/packs/*.json
-public/packs/               generated packs (committed, versioned)
-.github/workflows/data.yml  daily pack refresh + commit
-.github/workflows/pages.yml build + deploy to GitHub Pages
-scripts/dev-api.mjs        local Node host for the Worker handler
+  main.tsx                  React root, PWA registration, preload-error reload
+  App.tsx                   views, tabs, assembly lifecycle, walk orchestration
+  area/store.ts             featured/search areas, cache-first assembly
+  sources/assemble.ts       runtime area assembler (five streamed stages)
+  sources/cache.ts          IndexedDB: packs, TTL cache, memory stores
+  sources/                  one adapter per open source (OSM, photos, pulse, routes)
+  sources/photoMatch.ts     shared fuzzy title matching for photos and stories
+  sources/text.ts           safe website URL helpers for the UI
+  map/                      MapLibre style regrade, palette, POI/route layers
+  agent/                    ToolLoopAgent, gateway adapter, 16 tools, prompt, facts
+  memory/                   memory files, archive, core blocks, retrieval
+  config/endpoints.ts       every external URL and public setting
+  config/i18n/              English and Arabic dictionaries
+  ui/                       homepage/intake, dossier, panels, chat
+  walk/                     frame matching and playback
+worker/src/index.ts         optional Worker: /api/chat, /api/memory, /api/weather
+scripts/dev-api.mjs         local host for the same Worker handler
+vite.config.ts              base path, lazy chunks, MapLibre worker copy
+.github/workflows/pages.yml build and deploy to GitHub Pages
 ```
 
 ## How a request works
 
-1. The browser loads `packs/index.json`, then downloads the pack for the
-   selected area (cached in IndexedDB, refreshed when the published version
-   changes).
-2. A chat message and a compact area summary (see [AI and memory](docs/AI_AND_MEMORY.md))
-   are sent straight to the Kiri Gateway from the browser.
-3. The gateway's SSE stream is read by `src/agent.ts`; a grounded system prompt
-   is assembled in the browser from `shared/`.
-4. The browser parses any map actions and executes them on the map; after the
-   answer, a second gateway call extracts durable facts into the client profile.
-   With `VITE_API_BASE` set, steps 2–4 go through the optional Worker instead.
+1. The homepage form resolves an area (featured manifest or geocoded search) and writes the traveller and trip facts into `/memories/traveller.md` and `/memories/trip.md` **before** assembly starts.
+2. `getOrAssembleArea()` returns an IndexedDB pack immediately when fresh; when stale it returns the cached pack and re-assembles in the background. A new area launches all five stages in parallel.
+3. The map is initialised under the loader and waits for `style.load`, then receives the assembled places. When stages settle the app reveals the map with a grow-and-fade transition.
+4. The chat panel talks to a client-side `ToolLoopAgent` through `DirectChatTransport`. Tools read the current pack and operate on the live map and the IndexedDB memory files; the model itself is reached through the Kiri Gateway adapter.
 
-## Deploy for $0
+## Deployment
 
-Primary: push to `master` — `.github/workflows/pages.yml` builds with
-`VITE_BASE=/niyvaru/` and publishes to **https://nwokike.github.io/niyvaru/**.
-No Worker is needed. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the
-optional Cloudflare setup.
+Push to `master` (or `main`): `.github/workflows/pages.yml` builds with `VITE_BASE=/niyvaru/` and deploys `dist/` to GitHub Pages. `vite.config.ts` copies the MapLibre worker into `dist/assets` in a `closeBundle` hook because MapLibre derives its worker URL from `import.meta.url`. All app assets use `import.meta.env.BASE_URL`, so the same build works at a sub-path or at the domain root. See [Deployment](docs/DEPLOYMENT.md) for the optional Cloudflare Worker mode.
 
-## Cost boundaries (read before promising "free")
+## Cost boundaries
 
-- Free: GitHub, GitHub Actions (public repo, or private within included minutes),
-  Cloudflare Pages, Workers, OpenFreeMap, OSM/Overpass, Panoramax, Open-Meteo
-  open-access tier, NASA EONET, OSRM demo, Kiri Gateway.
-- Not free: **iOS App Store ($99/year), Google Play ($25 one-time)**, and any
-  commercial tier of the map/weather providers listed in
-  [Data pipeline](docs/DATA_PIPELINE.md).
-- The prototype deliberately uses no D1, R2, paid LLM API or paid geocoding.
+Everything the app calls is free and open: GitHub, OpenFreeMap, OpenStreetMap/Overpass, Photon/Nominatim, Wikimedia Commons/Wikipedia, Panoramax and Mapillary (free developer token), MET Norway, OSRM, GDELT, Mastodon, Bluesky Jetstream, AWS Terrarium tiles and the Kiri Gateway. No paid map, geocoder, weather API, LLM API or database. App-store distribution, if ever wanted, is outside the web app: iOS $99/year, Google Play $25 once. Open-Meteo's open-access tier is used only as a fallback and is labelled non-commercial.
 
 ## Honest limits
 
-- Public Overpass mirrors are rate-limited; the pipeline tries five mirrors and
-  the main instance is sometimes at capacity.
-- Panoramax coverage near the Haram is real but thin (~88 frames in 1.2 km).
-- There is no free live crowd/traffic feed; "what is happening" is prayer times,
-  weather, EONET and local posts only.
-- The free Open-Meteo tier is non-commercial; production needs self-hosting or
-  NOAA. OSRM demo is prototype-only.
-- Kiri Gateway depends on your free provider roster. The Worker speaks OpenAI
-  wire format, so a local model can replace it without changing the app.
-- The Worker free plan has request/CPU limits; the static-first design keeps
-  map, packs and walks off the Worker entirely.
+- Public Overpass mirrors are rate-limited; the OSM map API fallback covers most browser blocks. Panoramax and Mapillary coverage varies by city, and the walk HUD says so when a route has no frames.
+- GDELT and some Mastodon instances lack reliable CORS; news and social items are optional pulse, not a gate on the map.
+- Open map data carries no hotel prices. The concierge says so instead of quoting numbers.
+- The service worker caches the app shell only; area packs and memory live in IndexedDB, and map tiles rely on HTTP caching.
 
-## Contributing
+## Documentation
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). No secrets in commits; run `npm run build`
-before opening a PR.
+| Topic | Document |
+|---|---|
+| Components, lifecycle, state ownership | [Architecture](docs/ARCHITECTURE.md) |
+| Open data sources, assembly stages, adding an area | [Data pipeline](docs/DATA_PIPELINE.md) |
+| Agent, tools, gateway and memory | [AI and memory](docs/AI_AND_MEMORY.md) |
+| Pages build and optional Worker | [Deployment](docs/DEPLOYMENT.md) |
+| PWA and native-shell research | [Mobile](docs/MOBILE.md) |
+| Common failures and fixes | [Troubleshooting](docs/TROUBLESHOOTING.md) |
+| Installed libraries, APIs actually used, risks | [Dependency study](docs/DEPENDENCY_STUDY.md) |
+| Ground rules and PR checklist | [Contributing](CONTRIBUTING.md) |

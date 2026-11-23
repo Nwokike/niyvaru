@@ -1,88 +1,70 @@
 # Troubleshooting
 
-## Map is blank / "GPU initialization" error
+Verbose logs are opt-in: set `localStorage.niyvaruDebug = "1"` and reload for `[niyvaru:*]` scope logs. Failures log even without it.
 
-- MapLibre v6 requires WebGL2. Check in the browser console:
-  `document.createElement('canvas').getContext('webgl2')`.
-- If null: use a newer browser/device, or pin `maplibre-gl` to v5 (WebGL1).
-- On iOS WebViews, WebGL context loss is a known issue; add context-loss
-  handlers and test on a real device.
+## Map is blank or reports a GPU error
 
-## Map style does not load
+MapLibre v6 requires WebGL2. Check `document.createElement("canvas").getContext("webgl2")` in the console. If it returns `null`, use a newer browser/device or pin `maplibre-gl` to v5. iOS WebViews have known context-loss reports; test on a real device.
 
-- `initMap()` fetches `https://tiles.openfreemap.org/styles/liberty` and
-  rewrites `sources.openmaptiles.url` to a `pmtiles://` URL. Check the network
-  tab for that style and for `https://tiles.openfreemap.org/planet`.
-- The `pmtiles` protocol is registered once via `maplibregl.addProtocol`.
-- If you set a CSP (Tauri or self-hosted headers), allow the basemap host.
+## Map style fails or looks flat
 
-## POI pins are missing
+`loadRegradedStyle()` loads `endpoints.tiles.openFreeMapStyle` and regrades it on `style.load`. Watch for `[niyvaru:map] basemap error` in the console: the code falls back to a bare background style, so a flat map means the style request failed. If only relief is missing, either the Terrarium tiles failed (`setTerrain(null)`) or the device was detected as low power — in that case flat terrain and no extrusion are intentional, and the POI set is capped at 600. A CSP or native shell must allow the tile and DEM hosts.
 
-- Check `GET /packs/index.json` and `/packs/makkah-haram.json`.
-- Regenerate with `npm run data`; the console prints POI counts by kind.
-- The main Overpass instance is sometimes at capacity. The pipeline falls back
-  through five mirrors; check which one answered. If all fail, the pack still
-  builds with zero POIs — re-run later.
-- Pins are filtered if a previous agent action called `highlight_kind`; say
-  "clear the filters" or use the Ops tab action.
+## Map worker 404 after a static deploy
 
-## Walk overlay shows no frames
+MapLibre v6 resolves its worker as `./maplibre-gl-worker.mjs` relative to `import.meta.url`. `vite.config.ts` copies that file into `dist/assets` in a `closeBundle` hook. Check that `dist/assets/maplibre-gl-worker.mjs` exists after `npm run build`, that the deployed URL matches `VITE_BASE`, and that the file is served with a JavaScript content type. If the worker fails, the map canvas usually stays blank with a console error about workers.
 
-- `pack.sequences` may be empty if Panoramax was unavailable during the build.
-- Frames come from `assets.hd.href`/`sd.href`; Panoramax CORS allows direct
-  image loading, but a CSP must allow `panoramax.openstreetmap.fr`.
-- A route can play without frames; the UI says "route only".
+## Assembly never finishes
 
-## Chat fails in Worker mode
+The loader reveals when all five stages reach `done` or `failed`; the Enter button enables after the first stage settles. Each stage has a fallback, so even a total source outage produces an empty-but-valid area. Check the stage detail lines and the `[niyvaru:map]`/network logs. Changing the area aborts the previous assembly through `AbortController`; a stale pack is returned immediately and refreshed in the background, so old data on first paint is expected.
 
-- This only applies when `VITE_API_BASE` is set. Copy
-  `worker/.dev.vars.example` to `worker/.dev.vars`, restart the API process, and
-  in production set the Worker secret with
-  `npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml`.
-- In direct mode (default on GitHub Pages) there is no Worker and no setup.
+## No places on the map
 
-## Chat returns 502 / gateway errors
+- Confirm the `places` stage count in the loader. Overpass runs three shards on public mirrors with a 25 s timeout; if all fail, `src/sources/osmMap.ts` fetches the OSM map API and caps at 1,200 places.
+- The pack is cached for 12 hours. Clear storage from the Memory panel to force a full re-assembly.
+- Previous kind filters hide places: tap **All** in the layer chips or ask the agent to clear the view. POI circles become visible at zoom 12.5 and labels at zoom 16.
+- The camera is bounded to roughly 1.9× the area radius; zooming out cannot reveal places outside it.
+- If a place has no photographs: Commons files are only attached within 300 m or by a matching file title, and each place holds at most six. Unmatched photos still introduce the area as the hero image.
 
-- `curl https://api.kiri.ng/health` to confirm the gateway is up.
-- Free provider rosters can be rate-limited; the gateway tries fallbacks but
-  may exhaust them. Retry later.
-- Check `GATEWAY_URL` — it defaults to `https://api.kiri.ng`.
+## Walk shows no street photographs
 
-## The model emits raw JSON instead of `<niyvaru>` blocks
+Coverage varies by city. `src/walk/matcher.ts` attaches frames within 60 m of the route, enforces 18 m spacing and caps playback at 110 frames. With fewer than two frames the HUD says route-only and glides the camera along the real route; with reduced motion it shows a photo strip instead. The HUD counts distance and remaining minutes; use the pause button or space bar to pause, Escape to stop. Panoramax is keyless; Mapillary needs `VITE_MAPILLARY_TOKEN`, and without it only Panoramax frames are used. Both adapters are cached for 24 hours.
 
-Expected. `src/agent.ts` accepts both forms and strips them from the answer.
-If an action does nothing, check that the `id` exists in the current pack and
-that the action name is one of the five documented in
-[AI and memory](AI_AND_MEMORY.md).
+## Chat fails or returns an error
+
+- Check `VITE_GATEWAY_URL` (default `https://api.kiri.ng`) and the gateway's health. The client requests model `beam` through the OpenAI-compatible adapter and rewrites `/chat/completions` to `/chat`.
+- On HTTP 400 or 5xx the gateway adapter retries **once** with compacted tool results and a shortened message list. A persistent error is shown verbatim in the chat, not hidden.
+- The loop stops at 12 steps, when `start_walk` runs, or when the same tool call repeats for three steps. Complex requests may need to be split; the tool chips show which tool ran and whether its output arrived.
+- A repeated read tool may answer with an "already retrieved" note rather than fresh data. That is the agent's dedupe cache, not a failure; use a different question or reload the page after the area is re-assembled.
+- `DirectChatTransport` `onError` surfaces the real message. If text is missing after tool calls, check that `sendAutomaticallyWhen` logic still matches the installed AI SDK version ([Dependency study](DEPENDENCY_STUDY.md)).
+
+## A tool call does nothing
+
+Tool inputs are Zod schemas with coercion and defaults. `repairToolCall` fixes fenced/trailing-comma JSON and fuzzy-matches a hallucinated tool name to the real roster; an id that is not in the current pack returns an error to the model. Check that the pack has finished assembling, that the tool chip reached `output-available`, and that the id shown in the dossier or facts block is the one used.
+
+## Prayer times or weather look wrong
+
+Prayer times are computed locally by `adhan` from the area coordinates, the area's `prayerMethod` (default `mwl`) and a timezone resolved through Open-Meteo; they are never fetched from a prayer API. Weather prefers MET Norway, then Open-Meteo, and labels the provider and licence. A wrong timezone entry cached in IndexedDB persists for 30 days; clear storage to refresh it.
 
 ## Memory did not learn anything
 
-- Memory extraction runs *after* the reply and is non-blocking; give it a
-  second and check the Ops tab.
-- `sanitizeProfile()` drops malformed values. Explicit statements such as "I
-  use a wheelchair and my budget is $120" work best.
-- Clear memory in Ops if the profile is stale.
+The intake form writes `traveller.md` and `trip.md` on submit; everything else is written by the `memory` tool during a turn. Files have per-path character caps (4,000–20,000) and oversized writes are refused with a note. Deletes move content to the archive instead of destroying it. The Memory panel lists every file, allows editing, exports/imports JSON and clears all stores (then re-seeds the empty files). Storage is per-origin: a different base path has different memory.
 
-## `wrangler dev` fails with `spawn .../workerd ENOENT`
+## Wrong language or time of day
 
-On Alpine/musl, workerd's glibc-linked binary cannot start. Use
-`npm run api:dev` — it imports the same worker handler in plain Node.
-`wrangler deploy --dry-run` still works for bundling checks.
+The first visit picks Arabic when `navigator.language` starts with `ar`, otherwise English; a saved `localStorage.niyvaru.locale` wins. The header selector overrides both. The hour starts from `new Date()` in the browser and can be changed with the slider, the named stops or the `set_time_of_day` tool. A restored tab keeps the slider position for the session, not across reloads.
 
-## `npm run data` returns zero POIs but a pack is written
+## Offline shell does not install or update
 
-Per-source failures are intentionally non-fatal. Read the first console line
-(`overpass ...`), re-run later, and consider adding/rotating mirrors in
-`overpassPois()`.
+The service worker is registered only when `serviceWorker` exists and only from the base path given by `import.meta.env.BASE_URL`. It precaches the shell, not tiles or APIs. After a deploy, `vite:preloadError` reloads once to recover from stale hashed chunks; if a stale shell persists, unregister the worker in DevTools and reload. PWA install availability is reported through `beforeinstallprompt`, which the Memory panel turns into an Install button.
 
-## CI did not refresh the packs
+## Optional Worker problems
 
-- The workflow triggers on `master` and `main`, on `data/**` pushes, on manual
-  dispatch, and daily at 03:17 UTC.
-- It needs `contents: write`; check the workflow permissions in GitHub settings.
-- Manual: `gh workflow run data-pack`.
+- `curl https://<worker>/api/health` should return `{"ok":true,"service":"niyvaru-api"}`.
+- Copy `worker/.dev.vars.example` to `worker/.dev.vars` and set `GATEWAY_SECRET`, or set it in production with `npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml`.
+- On Alpine/musl, `wrangler dev` can fail with `spawn .../workerd ENOENT`; use `npm run api:dev`, which runs the same handler in Node.
+- The agent does not require the Worker. The only browser path that uses it by default is the MET Norway weather proxy when `VITE_API_BASE` is set.
 
-## TypeScript/build errors
+## Build or type errors
 
-Run `npx tsc -b` on its own to see them clearly. `npm run build` runs the same
-check before Vite. Keep generated `tsconfig.tsbuildinfo` out of git (ignored).
+Run `npx tsc -b` alone for a clean report; `npm run build` runs the same check before Vite. `tsconfig.tsbuildinfo` is generated and ignored. After a successful build, verify `dist/assets/maplibre-gl-worker.mjs` exists and that `dist/index.html` references the expected base path when building with `VITE_BASE=/niyvaru/`.

@@ -1,78 +1,50 @@
-# Mobile support: research and recommendation
+# Mobile support
 
-This document records the research done on 2026-11-21 so nobody has to
-re-litigate it. The short answer: **Tauri can package this app, but it is not
-the right first move for mobile, and it does not solve on-device AI.**
+The browser app is canonical and already mobile-shaped: responsive layout, touch-friendly controls, `viewport-fit=cover`, reduced-motion handling, installable PWA manifest and an offline shell. This document records what that covers and what a native shell would add.
 
-## The options compared
+## PWA shell (shipped)
 
-| Option | Effort from this repo | Store distribution | WebGL constraints | On-device AI | Desktop |
+- `public/manifest.webmanifest`: standalone display, portrait orientation, theme colour, SVG maskable icon and favicon.
+- `public/sw.js`: precaches `./`, `./index.html`, the manifest, the icon and `areas.json`; navigation is network-first with a shell fallback, same-origin assets are stale-while-revalidate, and cross-origin tiles/APIs are left to HTTP caching.
+- `src/main.tsx`: registers the worker at `import.meta.env.BASE_URL + "sw.js"` on `load`; offline failure is non-fatal. A `vite:preloadError` listener reloads once after a deploy replaces hashed lazy chunks.
+- `src/sources/cache.ts`: IndexedDB holds area packs, TTL caches, memory files, archive and the chat window. `requestPersistence()` asks the browser to keep that storage across pressure eviction.
+- `src/ui/MemoryPanel.tsx`: surfaces the `beforeinstallprompt` event as an Install button and shows whether persistent storage was granted.
+
+This means the shell and previously assembled areas open without a network. Map tiles and live pulse sources need a connection.
+
+On coarse-pointer devices reporting under 6 GB of memory, `src/map/mapView.ts` caps the POI set at 600 and `src/map/style.ts` skips terrain and building extrusion while keeping the hour-driven palette and all brand colours. The map stays readable and interactive without the expensive 3D work.
+
+## Native-shell options
+
+| Option | Effort from this repo | Store distribution | WebGL | On-device AI | Desktop |
 |---|---|---|---|---|---|
-| PWA (manifest + service worker) | days | none; install from browser | browser APIs | needs a browser model | no |
-| Capacitor | low | yes | same system webview | same problem | no |
-| Tauri v2 | medium | yes | same system webview | desktop sidecar yes, mobile doubtful | yes |
-| React Native | high (rewrite UI/map) | yes | native map renderer | native modules | no |
+| PWA (current) | days, already done | none; install from browser | system browser | browser model only | no |
+| Capacitor | low | yes | system webview | same constraint | no |
+| Tauri v2 | medium | yes | system webview | desktop sidecar; mobile unreliable | yes |
+| React Native | high (UI and map rewrite) | yes | native map renderer | native modules | no |
 
-## What transfers to Tauri unchanged
+The whole `src/` tree, the IndexedDB schema, the agent and the Worker client transfer to Capacitor or Tauri unchanged: both consume a Vite build. A native shell adds plugins, permission/capability files and a CSP, plus a platform adapter for bundled resources (for example Tauri's `asset://localhost/` on Android).
 
-The whole `src/` tree, the packs, the memory format, the agent and the Worker
-client. Tauri consumes a Vite build. You would add a native shell, plugins,
-capabilities/permission files and a CSP, plus a small platform adapter because
-Android bundled resources appear as `asset://localhost/` URIs rather than real
-paths (Tauri resource docs).
+## Hard constraints
 
-## Hard constraints found
+1. **MapLibre v6 requires WebGL2.** Android WebView depends on the device's provider; iOS WKWebView has WebGL2 since Safari 15 but has documented context-loss cases. Test on real devices — emulators are not proof. Pinning MapLibre v5 is the fallback if a target device cannot provide WebGL2.
+2. **Stores are not free.** Tauri itself is free, but iOS needs the Apple Developer Program ($99/year), macOS, Xcode and signing; Google Play is $25 once. iOS cannot be built from Linux. This conflicts with the project's $0 rule; sideloading Android is not a product channel.
+3. **Local AI on a phone is a separate product.** Desktop sidecars are not reliable on mobile (Tauri issue #9774 covers a missing bundled sidecar on Android), and iOS generally disallows executing bundled binaries. Inference here currently goes to the Kiri Gateway from the browser.
+4. **Review risk.** Apple Guideline 4.2 rejects apps that are essentially a website in a WebView. Installable offline areas, local memory and a real walk utility are the defensible native behaviours; they must be visible, not just a wrapped URL.
+5. **CSP and remote hosts.** A native shell must allow `tiles.openfreemap.org`, `s3.amazonaws.com` (Terrarium DEM), Wikimedia, Panoramax/Mapillary, `api.kiri.ng` and any configured Worker. The gateway credential stays the public family key in the bundle; no secret belongs in the binary.
 
-1. **WebGL2 is mandatory in MapLibre v6.** The official v5→v6 migration guide
-   says WebGL1 support was removed; a device without WebGL2 fails to render.
-   Tauri uses the system webview: Android WebView depends on the device's
-   provider, and iOS WKWebView uses the system WebKit (WebGL2 since Safari 15).
-   There are documented WebGL context-loss reports on iOS WebViews. Test on
-   real devices; emulators are not proof. Pinning MapLibre v5 is a fallback.
-2. **App stores are not free.** Tauri is free, but iOS needs the Apple Developer
-   Program ($99/year), macOS, Xcode and code signing; Google Play is $25 once.
-   iOS cannot be built from Linux. This conflicts with the project's $0 rule.
-   Side-loading Android is free but not a product channel.
-3. **Local AI on a phone is a separate project.** Tauri sidecars work on
-   desktop but are unreliable on mobile: issue #9774 reports a bundled sidecar
-   not found on Android; iOS generally disallows executing arbitrary bundled
-   binaries. Kiri Runtime (Python/numpy) and Kiri Router (Node on localhost)
-   do not fit a phone as-is. The Tauri updater plugin is desktop-only too.
-4. **Review risk.** Apple Guideline 4.2 rejects apps that are essentially a
-   website in a WebView. This app has offline packs, native plugins and a real
-   utility, which is a defensible case, but the native behaviour must be
-   visible, not just a wrapped URL.
-5. **CSP and remote hosts.** A Tauri shell must explicitly allow
-   `tiles.openfreemap.org`, `panoramax.openstreetmap.fr`, `api.kiri.ng` and the
-   deployed Worker in `app.security.csp`/capabilities. The gateway secret must
-   stay on the server, never in the binary.
+## Practical order
 
-Capacitor and Tauri share the same webview constraints. Tauri's real advantages
-are the Rust backend, smaller binary, desktop target and desktop sidecars.
-Capacitor is the lower-effort mobile-first path from this exact codebase
-(`npm i @capacitor/core @capacitor/ios @capacitor/android`, `npx cap add ios`,
-`npx cap add android`, `npx cap sync`).
-
-## Recommendation
-
-1. **Now:** keep the web app canonical and add a PWA manifest + service worker.
-   Installable on phones, $0, no toolchain, validates real mobile usage.
-2. **When stores are required:** choose Capacitor if mobile is the only goal;
-   choose Tauri if you also want desktop and a Rust/local-model path.
-3. **Before either:** bundle a basemap PMTiles pack for genuine offline use
-   (today only POIs/routes/frames are offline), and decide what "local AI"
-   means on a phone. Those product decisions dominate the shell choice.
+1. Keep the PWA canonical and validate real mobile usage; it is already installable and offline-capable for assembled areas.
+2. If stores are required, choose Capacitor for a mobile-only target, or Tauri if desktop and a Rust/local-model path also matter.
+3. Decide what "local AI" means on a phone before committing to a shell — that decision dominates the packaging choice.
 
 ## Sources
 
-- Tauri prerequisites (iOS is macOS-only; Android needs Android Studio/NDK):
-  https://tauri.app/start/prerequisites
-- Tauri App Store distribution (signing, Apple Developer, IPA upload):
-  https://v2.tauri.app/distribute/app-store/
-- MapLibre GL JS v5→v6 migration guide ("WebGL2 is now required"):
-  https://maplibre.org/maplibre-gl-js/docs/guides/v5-to-v6-migration-guide/
+- Tauri prerequisites: https://tauri.app/start/prerequisites
+- Tauri App Store distribution: https://v2.tauri.app/distribute/app-store/
+- MapLibre GL JS v5→v6 migration guide (WebGL2 required): https://maplibre.org/maplibre-gl-js/docs/guides/v5-to-v6-migration-guide/
 - Tauri webview versions: https://v2.tauri.app/reference/webview-versions/
 - Tauri sidecar mobile bug: https://github.com/tauri-apps/tauri/issues/9774
-- Tauri WebGL2 support discussion: https://github.com/tauri-apps/tauri/issues/2866
 - Capacitor workflow: https://capacitorjs.com/docs/basics/workflow
 - Apple App Review Guidelines: https://developer.apple.com/app-store/review/guidelines/

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dictionary } from "../config/i18n";
 import { writeFile } from "../memory/store";
 import { searchAreas } from "../area/store";
@@ -66,11 +66,13 @@ function tripMarkdown(input: {
 }
 
 function Stepper({
+  d,
   label,
   value,
   min,
   onChange,
 }: {
+  d: Dictionary;
   label: string;
   value: number;
   min: number;
@@ -80,11 +82,11 @@ function Stepper({
     <div className="stepper">
       <span className="stepper-label">{label}</span>
       <div className="stepper-controls">
-        <button type="button" className="stepper-btn" disabled={value <= min} onClick={() => onChange(value - 1)} aria-label={`Fewer ${label}`}>
+        <button type="button" className="stepper-btn" disabled={value <= min} onClick={() => onChange(value - 1)} aria-label={`${d.intake.fewer} ${label}`}>
           −
         </button>
         <span className="stepper-value">{value}</span>
-        <button type="button" className="stepper-btn" onClick={() => onChange(value + 1)} aria-label={`More ${label}`}>
+        <button type="button" className="stepper-btn" onClick={() => onChange(value + 1)} aria-label={`${d.intake.more} ${label}`}>
           +
         </button>
       </div>
@@ -125,9 +127,47 @@ export function Intake({
   const [interests, setInterests] = useState<string[]>([]);
   const [name, setName] = useState("");
   const [showWarning, setShowWarning] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (homepage) return;
+    const root = modalRef.current;
+    if (!root) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = (): HTMLElement[] =>
+      Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'));
+    focusable()[0]?.focus();
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        onCloseRef.current(area);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [homepage, area]);
 
   const finish = async (): Promise<void> => {
     const language = locale === "ar" ? "Arabic" : "English";
@@ -158,8 +198,10 @@ export function Intake({
           flexible,
         })
       );
-    } finally {
+      setSaveError("");
       onClose(current);
+    } catch {
+      setSaveError(d.intake.saveError);
     }
   };
 
@@ -229,6 +271,8 @@ export function Intake({
               </button>
             ))}
           </div>
+        ) : searchResults && !searching ? (
+          <p className="muted request-search-empty">{d.welcome.noResults}</p>
         ) : null}
         <div className="request-chips">
           {(areas.length ? areas : area ? [area] : []).map((a) => (
@@ -276,9 +320,9 @@ export function Intake({
       <fieldset className="request-group">
         <legend>{d.intake.party}</legend>
         <div className="request-steppers">
-          <Stepper label={d.intake.adults} value={adults} min={1} onChange={setAdults} />
-          <Stepper label={d.intake.children} value={children} min={0} onChange={setChildren} />
-          <Stepper label={d.intake.rooms} value={rooms} min={1} onChange={setRooms} />
+          <Stepper d={d} label={d.intake.adults} value={adults} min={1} onChange={setAdults} />
+          <Stepper d={d} label={d.intake.children} value={children} min={0} onChange={setChildren} />
+          <Stepper d={d} label={d.intake.rooms} value={rooms} min={1} onChange={setRooms} />
         </div>
       </fieldset>
 
@@ -362,6 +406,7 @@ export function Intake({
       </label>
 
       {showWarning ? <p className="request-warning">{d.intake.areaRequired}</p> : null}
+      {saveError ? <p className="request-warning" role="alert">{saveError}</p> : null}
 
       <button type="button" className="btn btn-bronze request-cta" onClick={submit}>
         {d.intake.cta}
@@ -427,9 +472,9 @@ export function Intake({
               </li>
             </ul>
           </div>
-          <div className="request-card rise" role="dialog" aria-label={d.intake.title}>
+          <section className="request-card rise" aria-label={d.intake.title}>
             {formContent}
-          </div>
+          </section>
         </div>
       </div>
     );
@@ -437,7 +482,7 @@ export function Intake({
 
   return (
     <div className="request-modal-overlay">
-      <div className="request-panel request-panel-modal" role="dialog" aria-label={d.intake.title}>
+      <div ref={modalRef} className="request-panel request-panel-modal" role="dialog" aria-modal="true" aria-label={d.intake.title}>
         <button type="button" className="request-close" onClick={() => onClose(area)} aria-label={d.common.close}>
           ✕
         </button>

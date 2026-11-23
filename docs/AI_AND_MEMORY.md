@@ -1,118 +1,106 @@
-# AI and client memory
+# AI and memory
 
-## Why the gateway, not the router
+## The agent runs in the browser
 
-Kiri Router is local-only: `POST https://router.kiri.ng/v1/chat/completions`
-returns `cloud_chat_disabled`; inference runs at `http://127.0.0.1:8082/v1` on
-the device whose IP is allowed. A hosted web app cannot reach a visitor's
-localhost, so the prototype calls **Kiri Gateway** directly from the browser
-(verified CORS: `access-control-allow-origin: *` for `https://nwokike.github.io`).
-A server-side Worker mode is also available. Both use the OpenAI chat wire format.
+`src/agent/runtime.ts` creates an AI SDK `ToolLoopAgent` with the Kiri Gateway model and 16 typed tools. `src/ui/ChatPanel.tsx` uses `useChat` from `@ai-sdk/react` with a `DirectChatTransport`, so there is no chat API route in the default setup: the transport drives the agent in-process, streams UI message parts, and renders tool activity as chips. The agent is rebuilt when the area pack, locale or memory revision changes; `prepareStep` re-reads the pack and memory before every step, so a write made by the `memory` tool is visible in the same turn.
 
-## Gateway contract used
+Settings that matter:
 
-`POST https://api.kiri.ng/chat`
-
-```json
-{
-  "task_type": "text",
-  "stream": true,
-  "messages": [
-    { "role": "system", "content": "..." },
-    { "role": "user", "content": "..." }
-  ]
-}
-```
-
-Headers: `Content-Type: application/json`, `Authorization: Bearer <family app credential>`
-(the same value Asase and akili-app ship; set at build time with `VITE_GATEWAY_KEY`).
-
-The gateway's family roster (in `Nwokike/kiri-gateway/index.js`) tries Groq
-qwen3.8-27b → qwen3.6-27b → gpt-oss-120b → gpt-oss-20b → NVIDIA
-diffusiongemma → nemotron variants, with per-model timeouts, SSE passthrough
-and `_model_used` tagging. In direct mode the browser reads the SSE stream; in
-Worker mode the Worker forwards it as `text/event-stream` with CORS headers.
-
-**The "4K/8K context" worry:** the `6144` in the gateway roster is
-`max_completion_tokens`, not a context-window cap. Our context problem is
-solved by construction: each request sends a compact area summary plus the
-profile and last 8 messages, not the whole pack or the full history.
-
-## Optional Worker API (only when `VITE_API_BASE` is set)
-
-| Route | Request | Response |
+| Setting | Value | Why |
 |---|---|---|
-| `GET /api/health` | — | `{ ok, service, gateway }` |
-| `POST /api/chat` | `{ text, history, profile, area }` | SSE chunks of `choices[0].delta.content` |
-| `POST /api/memory` | `{ history, profile, prompt }` | JSON object with extracted profile fields |
+| `toolOrder` | tools sorted by name | stable provider-side prompt caching |
+| `toolCallConcurrency` | `1` | all tools share one map and one memory store |
+| `stopWhen` | `[isStepCount(12), hasToolCall("start_walk"), stopAfterRepeatedToolCalls(3)]` | bounds the loop; starting a walk or three identical consecutive tool calls ends the turn |
+| `repairToolCall` | custom | rescues fenced/trailing-comma JSON and fuzzy-matches hallucinated tool names |
+| `timeout` | `firstChunkMs 30s`, `chunkMs 20s`, `toolMs 25s`, `stepMs 180s` | keeps weak free models from hanging the UI |
+| `temperature` / `maxRetries` | `0.4` / `1` | short, consistent answers |
 
-`area` is a trimmed shape: first 120 POIs, all routes, first 2 prayer days,
-first 2 weather days and all events. `shared/facts.ts` turns that into a few
-kilobytes of plain text with distances computed from the area centre.
+`lastAssistantMessageIsCompleteWithToolCalls` resubmits automatically after tool results, and `experimental_queue: true` queues messages sent while a turn is busy. `DirectChatTransport`'s `onError` returns the real error text to the chat instead of a generic failure.
 
-Errors are explicit: missing `GATEWAY_SECRET` returns HTTP 500 with a message;
-gateway failures return 502 with the upstream status. The UI shows them in a
-notice/message rather than failing silently.
+Two safeguards address weak free models without touching the message history: `normalizeToolArgs()` trims strings and sorts object keys so cosmetic rewrites collapse to one cache key, and a closure-local `readCache` gives repeated `search_places`, `nearby`, `place_details`, `get_now` and `get_place_story` calls their earlier result with a note instead of re-running them. The cache lives only as long as that agent instance. `stopAfterRepeatedToolCalls(3)` is a pure stop predicate: it neither prunes messages nor changes the 12-step ceiling.
 
-## Grounding rules
+## The 16 tools
 
-`shared/prompt.ts` instructs the model to:
+Defined with `tool()` and Zod schemas in `src/agent/tools.ts` and `src/memory/memoryTool.ts`. Numeric and boolean inputs use `z.coerce` with `.catch()` defaults so free models are corrected rather than rejected.
 
-- use only supplied facts and never invent places, prices, hours, accessibility
-  or events;
+| Tool | Effect |
+|---|---|
+| `search_places` | Orama full-text search over place names, kinds and tags; returns real ids |
+| `nearby` | Places near a place id or the area centre, filtered by kind, distance and open-now |
+| `place_details` | Hours, accessibility, contact, photos and story for one place |
+| `photos_for_place` | Real photographs with attribution and licence |
+| `focus_place` | Pins a place and flies the map to it |
+| `highlight_kinds` | Filters POI layers to selected kinds; null clears |
+| `clear_view` | Clears filters, route, focus pin and dossier |
+| `route_to` | Fetches a live walking route and draws it |
+| `show_route` | Draws one of the area's pre-assembled routes by id |
+| `start_walk` | Starts immersive walk playback along a route or to a place |
+| `set_time_of_day` | Relights the map: dawn, day, golden or night |
+| `get_now` | Today's prayer times, weather and latest pulse items |
+| `get_place_story` | Wikipedia extract attached to a place |
+| `draft_area_brief` | Hero photo, attached stories and place-kind counts |
+| `select_candidates` | Ranks hotels against mobility, budget and preferences with explicit reasons |
+| `memory` | Agent-managed memory files (`view`, `create`, `str_replace`, `insert`, `rename`, `delete`, `search`) |
+
+Every id in a tool result comes from the assembled pack. `select_candidates` states plainly that open data has no prices; it never invents them.
+
+## Gateway adapter and retry policy
+
+`src/agent/gateway.ts` uses `createOpenAICompatible({ name, baseURL, apiKey, fetch })` and requests model `beam`. The custom `fetch`:
+
+1. Rewrites the SDK's `POST {baseURL}/chat/completions` to the gateway's `POST {baseURL}/chat`. Authorization, headers and body pass through untouched.
+2. Returns an OK response unchanged — **no upfront pruning**. The full message history and all tool results reach the model on the first attempt.
+3. Only on `res.status >= 500` or `400` (the gateway's fallback chain exhausted, often from a smaller model's context limit) reads the body, truncates `tool` message content over 300 characters, keeps the system message, the first user prompt and the last four messages, and retries **once** with those compacted messages.
+4. If the retry also fails, returns the original response so the UI can show the real failure.
+
+There is no other retry path and no proactive trimming. `VITE_GATEWAY_URL` overrides the base URL; the gateway credential is the public family key in `src/config/endpoints.ts`, not a user secret. Model choice and free-provider fallbacks stay inside the gateway.
+
+## Grounding
+
+`src/agent/prompt.ts` fixes the voice and the hard rules; `src/agent/facts.ts` builds the compact `AREA DATA` block. The prompt requires the model to:
+
+- use only AREA DATA, memory files and tool results; never invent a place, price, hour, phone number, accessibility feature or event;
 - say "I don't have that data yet" when a fact is missing;
-- cite the fact behind a recommendation (distance, hours, wheelchair tag);
-- keep answers short;
-- emit map actions **only** when the traveller asked for an action.
+- name the place and cite the fact behind a recommendation;
+- take distances and walking times from routes or supplied facts, never silent estimates;
+- answer in the traveller's language, in at most three sentences or a compact list unless depth is requested;
+- drive the live map through tools, then describe the change in one sentence.
 
-## Action protocol
+The prompt also enforces tool economy: reuse ids and facts already listed in AREA DATA instead of re-searching, make one tool call per distinct intent, report a gap plainly rather than retrying a reworded query, and answer after a tool runs unless a genuinely different action is needed.
 
-An action is a JSON object with an `action` field. Preferred form:
+`areaFacts()` includes up to 80 places with their ids, kind, distance, hours, wheelchair tag and photo/story flags, plus place counts, walks, today's prayer and weather, a short pulse list and the attribution map. Place ids exist so tool calls can reference real objects.
 
-```
-<niyvaru>{"action":"highlight_kind","kind":"pharmacy"}</niyvaru>
-```
+## Memory: a filesystem in IndexedDB
 
-Free models often emit the bare JSON line instead. `src/agent.ts` accepts both,
-deduplicates them, and strips them from the displayed text.
+`src/sources/cache.ts` owns the `niyvaru` IndexedDB database (version 3). Memory uses three of its stores:
 
-| Action | Effect in `App.tsx` |
+| Store | Content |
 |---|---|
-| `focus_poi` with `id` | fly to POI, show marker |
-| `highlight_kind` with `kind` | filter POI circles and labels |
-| `show_route` with `id` | draw route, fit bounds |
-| `start_walk` with optional `route`, `sequence` | draw route, play frames |
-| `clear` | clear filters and route |
+| `mem_files` | Markdown files keyed by path under `/memories/` |
+| `mem_archive` | every previous version and every delete, appended with an id and timestamp |
+| `mem_chat` | auto-incrementing chat records, trimmed to the policy window |
 
-The facts builder includes POI ids (`[node/123]`) and route ids precisely so
-the model can emit valid actions.
+`seedIfEmpty()` creates four files from `src/config/memory-policy.ts`:
 
-## Client memory
+| File | Purpose | Char cap |
+|---|---|---|
+| `/memories/traveller.md` | party, ages, mobility, budget, language, preferences | 4,000 |
+| `/memories/trip.md` | dates, area, candidates considered or rejected, decisions | 6,000 |
+| `/memories/journal.md` | dated log across sessions; append, never rewrite | 20,000 |
+| `/memories/places.md` | notes keyed by place id | 12,000 |
 
-Keys in `localStorage`:
+The full-page intake form writes `traveller.md` and `trip.md` **before** assembly starts, so the first agent turn already knows who is travelling and when. After each completed turn, `App.tsx` appends the user and assistant text to `mem_chat` and bumps `memoryRev`, which rebuilds the agent.
 
-| Key | Content |
-|---|---|
-| `niyvaru.profile.v1` | `{ version, name, mobility, budget_usd_per_night, preferences, constraints, interests, language, home_area, notes, updated_at }` |
-| `niyvaru.chat.v1` | last 12 messages |
-| `niyvaru.posts.v1` | local feed posts |
+`assembleMemoryContext()` injects two core blocks (traveller capped at 1,200 chars, trip at 1,600), a directory listing with character counts, and a retrieval hint into the system prompt. The whole slice is capped at 2,600 tokens (~10,400 characters). Oversized blocks are trimmed with an explicit marker, never silently dropped.
 
-After each answer, `extractMemory()` calls the gateway (direct mode) or
-`/api/memory` (Worker mode) with a prompt that asks for JSON only. `shared/profile.ts` `sanitizeProfile()` coerces model output:
-unknown mobility values become `undefined`, non-positive budgets are dropped,
-arrays are filtered to strings. Existing values are preserved when the model
-returns nothing new — a bad model response cannot wipe the profile.
+The `memory` tool follows the public memory-tool command set but **delete archives instead of destroying**: `writeFile()` copies the previous content into `mem_archive` before overwriting, and `deleteFile()` moves the current content there before removing the live file. `search` reads the archive; `src/memory/search.ts` additionally provides Arabic-safe Orama retrieval over files and archived entries (tashkeel and alef variants are normalized before indexing).
 
-The Ops tab lets a user seed or correct: mobility, budget, preferences,
-constraints and interests, and clear memory entirely.
+`src/ui/MemoryPanel.tsx` shows the files, lets the traveller edit them in place, export a JSON dump (files, archive, chat, policy), import one, clear everything, and see whether persistent storage was granted. Clear re-seeds the four empty files.
 
-## Security notes
+## Privacy and failure notes
 
-- Direct mode uses the shared family credential embedded in the bundle, exactly
-  as Asase and akili-app do; no user input is needed.
-- In Worker mode, the credential lives only in the Worker and
-  `worker/.dev.vars` is gitignored.
-- The browser parses model output as text; action JSON is validated by field
-  name and matched against known POI/route ids before anything happens.
-- User prompt text is passed through without HTML rendering; chat messages are
-  rendered as React text nodes.
+- Memory, chat history and packs never leave the browser. The optional Worker proxies inference and weather only and stores nothing.
+- Tool outputs are validated against pack ids before the map changes; a hallucinated id returns an error string to the model.
+- Chat text and pulse posts render as React text nodes, not HTML.
+- Failures are logged by `src/debug.ts` even when verbose logging is off. Set `localStorage.niyvaruDebug = "1"` for verbose `[niyvaru:*]` logs.
+- If the gateway reply fails, the chat shows the error; a compacted retry happens only for the HTTP statuses listed above, never for a healthy response.

@@ -1044,16 +1044,41 @@ button {
   border-color: var(--bronze);
   color: var(--bronze-deep);
 }
+.walk-pause {
+  position: absolute;
+  top: 1.25rem;
+  inset-inline-end: 8.5rem;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.45rem 1.1rem;
+  font-weight: 500;
+  font-size: 0.84rem;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(10px);
+  transition: all var(--speed-1) var(--ease-quint);
+}
+.walk-pause:hover {
+  background: var(--paper);
+  border-color: var(--bronze);
+  color: var(--bronze-deep);
+}
 .walk-strip {
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr));
   gap: 2px;
+  padding: 2px;
+  background: rgba(25, 21, 18, 0.9);
 }
 .walk-strip img {
   width: 100%;
+  height: 6rem;
   object-fit: cover;
 }
 
@@ -1195,6 +1220,42 @@ button {
   text-overflow: ellipsis;
 }
 
+.dossier-photo-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  gap: 0.35rem;
+  margin-top: -0.4rem;
+}
+
+.dossier-photo-thumb {
+  position: relative;
+  margin: 0;
+  height: 4.5rem;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  background: var(--sand);
+}
+
+.dossier-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dossier-photo-thumb-attr {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent, rgba(25, 21, 18, 0.85));
+  color: rgba(251, 247, 241, 0.92);
+  font-size: 0.6rem;
+  padding: 0.8rem 0.3rem 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dossier-head {
   display: flex;
   flex-direction: column;
@@ -1251,6 +1312,31 @@ button {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.25rem;
+}
+
+.dossier-walk-btn {
+  flex: 1 1 60%;
+  justify-content: center;
+  padding: 0.65rem 1rem;
+  font-size: 0.92rem;
+}
+
+.dossier-ask-btn {
+  flex: 1 1 40%;
+  justify-content: center;
+  padding: 0.65rem 1rem;
+  font-size: 0.86rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--bronze);
+  outline-offset: 2px;
+}
+
+[dir="rtl"] .topbar,
+[dir="rtl"] .dossier-nav,
+[dir="rtl"] .walk-meta {
+  direction: rtl;
 }
 
 .discover-preview {
@@ -1384,12 +1470,62 @@ button {
   }
   .topbar {
     padding: 0.5rem 0.625rem;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
   }
   .tod {
-    display: none;
+    width: 100%;
+    border-radius: var(--radius-l);
+    flex-wrap: wrap;
+    padding: 0.4rem 0.5rem;
+  }
+  .tod-readout {
+    flex: 1 1 auto;
+    min-width: 7rem;
+  }
+  .tod-slider {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .tod-stops {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+  .ambient-pill {
+    order: -1;
+    margin-inline-start: auto;
   }
   .assembling-hero {
     width: 9rem;
     height: 11.5rem;
+  }
+  .walk-media {
+    top: 5.5rem;
+    bottom: auto;
+    inset-inline: 0.75rem;
+    width: auto;
+    height: 10rem;
+  }
+  .walk-hud {
+    bottom: calc(52vh + 0.75rem);
+    inset-inline: 0.75rem;
+    width: auto;
+    padding: 0.9rem 1rem;
+  }
+  .walk-stop,
+  .walk-pause {
+    top: 4.7rem;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.8rem;
+  }
+  .walk-stop {
+    inset-inline-end: 0.75rem;
+  }
+  .walk-pause {
+    inset-inline-start: 0.75rem;
   }
 }

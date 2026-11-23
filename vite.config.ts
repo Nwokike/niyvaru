@@ -50,12 +50,15 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+    // Do not inject eager modulepreloads for lazy chunks: the agent must not
+    // cost first paint, and map/search chunks are loaded on demand.
+    modulePreload: { resolveDependencies: () => [] },
     // Mobile-first: the map engine, the agent and the search engine are
     // separate lazy chunks — the welcome screen ships without them.
     rollupOptions: {
       output: {
         manualChunks: {
-          maplibre: ["maplibre-gl", "pmtiles"],
+          maplibre: ["maplibre-gl"],
           agent: ["ai", "@ai-sdk/react", "@ai-sdk/openai-compatible"],
           search: ["@orama/orama"],
         },

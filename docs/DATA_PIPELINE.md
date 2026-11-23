@@ -1,99 +1,108 @@
 # Data pipeline
 
-`data/build-data.mjs` is the only data job. It runs locally (`npm run data`) or
-in `.github/workflows/data.yml` (daily at 03:17 UTC, on manual dispatch, and on
-pushes that touch `data/`). It writes `public/packs/index.json` and one pack per
-area. Everything it uses is free and keyless.
+There is no build-time data job. `src/sources/assemble.ts` is the system of record: it builds an `AreaPack` in the browser when a traveller submits the area form, then `src/sources/cache.ts` stores that pack in IndexedDB. Featured areas are editorial data in `public/areas.json`; every other city comes from geocoding. No city name, feed query or editorial content is hardcoded in the source.
 
-## Sources, endpoints and licences
-
-| Source | Endpoint used | Produces | Terms |
-|---|---|---|---|
-| OpenStreetMap via Overpass | `https://overpass.openstreetmap.fr/api/interpreter` (plus fallbacks: `overpass-api.de`, `overpass.osm.ch`, `overpass.kumi.systems`, `overpass.private.coffee`) | hotels, pharmacies, shops, restaurants, cafés, mosques, banks, ATMs, hospitals, clinics, toilets, police, opening hours, phone, website, wheelchair | © OSM contributors, **ODbL** — attribute; derivative databases share-alike |
-| Panoramax | `https://api.panoramax.xyz/api/search?bbox=...&limit=1000` | ordered street-level frame sequences with GPS, azimuth, timestamps and image URLs | **CC-BY-SA 4.0** — attribute |
-| adhan (npm, local computation) | none — computed in Node | 30 days of prayer times, Muslim World League method, Shafi madhab, Asia/Riyadh | open source |
-| Open-Meteo | `https://api.open-meteo.com/v1/forecast` | 7-day temperature, precipitation, weather code, wind | free/open-access tier is **non-commercial** |
-| NASA EONET | `https://eonet.gsfc.nasa.gov/api/v3/events?bbox=...&status=open` | open natural events near the area | public domain |
-| OSRM demo | `https://router.project-osrm.org/route/v1/{foot,walking,driving}` | walking geometry, distance, duration | prototype only; self-host for production |
-
-The pipeline catches per-source failures: a dead source yields an empty array,
-and the rest of the pack is still written. Check the console output after
-`npm run data` — it prints counts by kind.
-
-## Pack format
-
-`index.json`:
+## Area meta
 
 ```json
 {
-  "version": "2026-11-21",
-  "generated_at": "...",
-  "areas": [
-    { "id": "makkah-haram", "name": "Makkah — Haram",
-      "center": [21.4225, 39.8262], "radius_m": 2000,
-      "file": "makkah-haram.json" }
-  ]
+  "id": "area-id",
+  "name": "Display name",
+  "country": "Country",
+  "lat": 0,
+  "lon": 0,
+  "radiusM": 2000,
+  "zoom": 15.2,
+  "language": "en",
+  "prayerMethod": "umm_al_qura",
+  "feeds": { "hashtags": ["..."], "gdeltQuery": "..." }
 }
 ```
 
-`makkah-haram.json` adds:
+`featuredAreas()` fetches `areas.json` from `BASE_URL` with `cache: "no-cache"`. `searchAreas()` calls `searchCities()` (Photon, then Nominatim) and converts each result with `areaFromGeocode()`: 2 km radius, zoom 15.2, language `en`, id derived from name and coordinates. `bboxOf()` turns the radius into a bounding box for every bbox-based source.
 
-- `pois[]` — `{ id, name, name_en, lat, lon, kind, tags }`
-- `routes[]` — `{ id, name, profile, wheelchair, distance_m, duration_s, geometry }`
-- `sequences[]` — `{ id, title, frames[] }`, each frame `{ url, thumb, lat, lon, heading, datetime }`
-- `prayer[]`, `weather[]`, `events[]`
+## The five assembly stages
 
-The pack `version` is the UTC date. `packs.ts` compares the cached version with
-`index.json`; on mismatch it downloads the new pack and replaces the cache.
+All stages launch in parallel; the routes stage starts when the places stage resolves because it needs destinations. `runStage()` emits `pending → active → done | failed`, and a failure returns an empty fallback so the rest of the area still renders. `onStage()` detail lines are the live counts shown by `src/ui/Assembling.tsx`.
 
-## What happens at run time
+| Stage | Sources | Result on the pack |
+|---|---|---|
+| `places` | Overpass shards → OSM map API fallback | `places[]` with normalized `kind`, tags, photos `[]` |
+| `photos` | Wikimedia Commons geosearch (anchored and titled), Panoramax meta-catalog | `heroPhoto`, photos matched to places by distance and title, at most six per place |
+| `story` | Wikipedia geosearch in `meta.language` | `story` attached to a place by fuzzy title match |
+| `routes` | FOSSGIS OSRM foot, public OSRM demo fallback | up to three `routes[]` (landmark, practical, green) |
+| `pulse` | MET Norway → Open-Meteo, adhan + Open-Meteo timezone, GDELT, Mastodon, `promotions.json` | `prayer[]`, `weather[]`, `pulse[]` |
 
-1. `loadPackIndex()` fetches `/packs/index.json` with `cache: no-cache`.
-2. `loadPack(id, index)` reads IndexedDB; if the version matches, use it.
-3. Otherwise fetch `/packs/<file>`, store it, return it.
-4. `App.tsx` feeds the pack into MapLibre layers and into the agent context.
+Photo and story attachment happens after the parallel fetches. `src/sources/commons.ts` is the single coordinate-aware Commons adapter: `anchoredPhotosNear()` keeps each file's coordinates, title and `ObjectName`, decodes HTML entities in credits, and uses `cachedWithRefresh()` so a stale cache answers immediately and refreshes in the background. `src/sources/photoMatch.ts` normalizes `File:` prefixes, extensions and separators once and is shared by photograph and Wikipedia-story matching. A Commons photo is assigned to a place within 300 m, with a title match as tie-breaker and as fallback for files without usable coordinates; assignments are scored so the strongest claim the limited slots (six photos per place) and no photo is used twice. Unattached photos become hero candidates, so the hero is never empty when photographs exist. Places are finally sorted by haversine distance from the area centre. The pack's `version` is an ISO timestamp, and its `attribution` map records every licence actually used.
 
-This is the "download a neighbourhood when the traveller selects a place"
-behaviour. There is currently one area; the mechanism is multi-area ready.
+## Sources, endpoints and licences
 
-## Refreshing locally
+All URLs live in `src/config/endpoints.ts`.
 
-```bash
-npm run data
-git diff --stat public/packs
-```
+| Source | Endpoint | Used for | Terms |
+|---|---|---|---|
+| Overpass | `overpass-api.de`, `overpass.openstreetmap.fr`, `overpass.kumi.systems`, `overpass.private.coffee` | named, tagged POIs: hotels, food, cafés, bars, shops, worship, health, money, toilets, green, heritage, civic | © OSM contributors, ODbL |
+| OSM map API (fallback) | `https://api.openstreetmap.org/api/0.6/map` | same ODbL data as XML when Overpass is unavailable or blocked | ODbL |
+| Photon / Nominatim | `photon.komoot.io/api`, `nominatim.openstreetmap.org/search` | search-as-you-type and fallback search | free, keyless; Nominatim 1 req/s policy |
+| Wikimedia Commons | `commons.wikimedia.org/w/api.php` | geosearched photographs with coordinates, file title, artist and licence | per-photo licence, credited in the UI |
+| Wikipedia | `{lang}.wikipedia.org/w/api.php` | intro extracts, linked to the source page | CC BY-SA, credited in the UI |
+| Panoramax | `api.panoramax.xyz` meta-catalog | street-level frames and place photos | CC-BY-SA 4.0 |
+| Mapillary | `graph.mapillary.com` with `VITE_MAPILLARY_TOKEN` | extra walk frames, optional | free developer token, CC-BY-SA |
+| OSRM | `routing.openstreetmap.de/routed-foot`, `router.project-osrm.org/route/v1/foot` | real pedestrian routes, distance and duration | keyless; self-host for production |
+| adhan (local) | no endpoint | prayer times for 7 days from coordinates and method | open source |
+| Open-Meteo | `api.open-meteo.com/v1/forecast` | timezone (`timezone=auto`) and weather fallback | open-access tier, non-commercial |
+| MET Norway | `api.met.no/weatherapi/locationforecast/2.0/compact` | preferred weather, also via optional Worker proxy | free including commercial use, CC BY 4.0 |
+| GDELT DOC 2.0 | `api.gdeltproject.org/api/v2/doc/doc` | open news articles from the last two days | free and open; CORS varies |
+| Bluesky Jetstream | `wss://jetstream1.us-east.bsky.network/subscribe` | live posts filtered by area hashtags | public relay, no auth |
+| Mastodon | `mastodon.social`, `mstdn.social` public hashtag timelines | recent posts | public, unauthenticated reads |
+| Placements | `BASE_URL + promotions.json` | clearly labelled promoted pulse items | data file, not code |
 
-The Action does the same and commits only if `public/packs` changed. It pushes
-to `master` (and `main`, if that branch is ever created).
+`src/sources/openingHours.ts` evaluates OSM `opening_hours` strings locally with a small dependency-free parser; unparseable values return `unknown` rather than a guess.
 
-## Adding another city
+## Overpass shards and fallback
 
-The script currently has a single `AREA` constant and writes a single area to
-the index. To support many cities:
+`fetchPlacesSharded()` runs three selector shards — `core`, `food` and the heavy `shops` shard — across two mirrors in parallel (never two simultaneous hits on one mirror), each with a 25 s timeout and `Promise.allSettled`. Progress callbacks report per-shard counts. Results are merged and de-duplicated by OSM id; unnamed objects are dropped. If no places arrive, `fetchPlacesFromOsmMap()` fetches the bbox from the core OSM map API, parses the XML with `DOMParser`, centroids ways from their nodes and caps the result at 1,200 places. `normalizeKind()` and `toTags()` are shared by both adapters so the pack shape is identical.
 
-1. Change `AREA` to an array of area objects.
-2. Wrap the body of `main()` in a loop and write `<id>.json` per area.
-3. Include every area in `index.json` with its bbox/centre/radius.
-4. Add a UI selector that calls `loadPack(selectedId, index)`.
+## Walking routes
 
-No changes are needed in `packs.ts`, `mapView.ts` or the Worker — they are
-already keyed by area id.
+`walkingRoute()` requests full GeoJSON foot routes from FOSSGIS, falling back to the public OSRM demo. It refuses implausible results over 25 km, caches for 24 hours and never accepts a driving profile. The assembler ranks places by distance and picks a heritage/worship landmark, a pharmacy or shop, and a green space, then resolves each pick in `Promise.allSettled`. The agent's `route_to` and `start_walk` tools can compute additional live routes the same way.
 
-## Production upgrades
+## Pack shape
 
-- **OSM:** download the regional extract (Geofabrik publishes a daily Saudi
-  PBF), run your own Overpass or import into a local database. Do not depend on
-  public mirrors at scale.
-- **Routing:** self-host OSRM or Valhalla with the same extract; derive an
-  accessibility-aware profile from OSM `wheelchair`/`entrance` tags.
-- **Basemap:** generate a PMTiles basemap with Planetiler and serve it from a
-  static host; OpenFreeMap remains a good fallback.
-- **Weather:** self-host Open-Meteo or use NOAA GFS (public domain) for
-  commercial use.
-- **Imagery:** Panoramax coverage is thin; self-host Geovisio or add another
-  open imagery source with a compatible licence.
+`AreaPack` in `src/sources/types.ts`:
 
-## Attribution
+- identity: `id`, `name`, `country?`, `version`, `center: [lat, lon]`, `radiusM`, `zoom`, `language`, `feeds?`, `prayerMethod?`
+- `places[]`: `{ id, name, nameEn?, lat, lon, kind, distanceM?, tags, photos[], story? }`
+- `routes[]`: `{ id, name, distanceM, durationS, coordinates: [lon, lat][] }`
+- `prayer[]`: date plus fajr, sunrise, dhuhr, asr, maghrib, isha
+- `weather[]`: date, high/low, precipitation, wind, WMO code, provider label
+- `pulse[]`: `{ id, source, kind: organic | promoted, title, text?, url?, at?, sponsor? }`
+- `heroPhoto?`, and `attribution`: source → licence map
 
-The app must display "© OpenStreetMap contributors (ODbL)" and credit Panoramax
-imagery (CC-BY-SA 4.0). OpenFreeMap attribution is included by the style.
+## Cache and refresh
+
+| Entry | Store / TTL |
+|---|---|
+| Area packs | `packs`, no TTL; `getOrAssembleArea()` treats a pack as fresh for 12 hours |
+| Geocode results | `kv`, 24 h |
+| Overpass shards | `kv`, 6 h |
+| OSM map fallback | `kv`, 6 h |
+| Commons photos | `kv`, 7 days |
+| Wikipedia stories | `kv`, 7 days |
+| Panoramax frames | `kv`, 24 h |
+| Mapillary frames | `kv`, 24 h |
+| Weather | `kv`, 3 h |
+| GDELT news | `kv`, 15 min |
+| Mastodon posts | `kv`, 10 min |
+| Routes | `kv`, 24 h |
+| Timezone | `kv`, 30 days |
+
+`cached()` returns a valid entry or produces and stores a new one; `cachedWithRefresh()` returns a stale hit immediately and refreshes in the background (used by Commons geosearch and geocode priming; area packs have their own 12-hour stale-while-revalidate path). `requestPersistence()` requests persistent storage at app start. The purge command for all of it is `clearEverything()`, exposed to the traveller as **Clear** in the Memory panel; each delete in memory is archived first.
+
+## Adding an area
+
+Add one object to `public/areas.json`. The homepage lists it, the form can select it, and the same assembler, map and agent handle it. Nothing in `packs`, `mapView` or the Worker is keyed to a particular city. Travellers do not need an entry at all: they can type any place into the search field.
+
+## Attributable data
+
+Keep the attribution map built in `assemble.ts` and the credits rendered in the Discover Dossier, Story tab and map control. OSM is ODbL; Commons/Wikipedia items carry their own licences; Panoramax and Mapillary are CC-BY-SA 4.0; MET Norway is CC BY 4.0; Open-Meteo items are marked non-commercial. Removing those strings breaks the source terms.

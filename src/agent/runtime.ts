@@ -3,10 +3,18 @@
  * Kiri Gateway, rebuilt per area session and per memory revision so the
  * system prompt always carries the current memory slice and area facts.
  */
-import { ToolLoopAgent, isStepCount, hasToolCall, type ToolCallRepairFunction, type ToolSet } from "ai";
+import {
+  ToolLoopAgent,
+  isStepCount,
+  hasToolCall,
+  type StopCondition,
+  type StepResult,
+  type ToolCallRepairFunction,
+  type ToolSet,
+} from "ai";
 import { gatewayModel } from "./gateway";
 import { buildSystemPrompt } from "./prompt";
-import { createAgentTools, type AgentContext } from "./tools";
+import { createAgentTools, normalizeToolArgs, type AgentContext } from "./tools";
 import type { AreaPack } from "../sources/types";
 import type { Locale } from "../config/i18n";
 import { seedIfEmpty } from "../memory/store";
@@ -43,6 +51,26 @@ function repairToolCallForWeakModels<TOOLS extends ToolSet>(): ToolCallRepairFun
   };
 }
 
+/**
+ * Backstop for weak models that re-issue the same read with cosmetic rewrites:
+ * stop once the identical (tool name + normalized input) signature repeats in
+ * `repeats` consecutive steps. Pure predicate — it never prunes messages and
+ * never changes the 12-step ceiling.
+ */
+function stopAfterRepeatedToolCalls<TOOLS extends ToolSet>(repeats = 3): StopCondition<TOOLS> {
+  return ({ steps }) => {
+    if (steps.length < repeats) return false;
+    const signature = (step: StepResult<TOOLS>): string =>
+      step.toolCalls
+        .map((call) => `${call.toolName}:${JSON.stringify(normalizeToolArgs(call.input))}`)
+        .sort()
+        .join("|");
+    const recent = steps.slice(-repeats);
+    const first = signature(recent[0]);
+    return first.length > 0 && recent.every((step) => signature(step) === first);
+  };
+}
+
 export async function createNiyvaruAgent(
   ctx: AgentContext,
   pack: AreaPack | null
@@ -64,7 +92,7 @@ export async function createNiyvaruAgent(
     toolOrder,
     toolCallConcurrency: 1,
     // Tools share one map and one memory store — sequential by design.
-    stopWhen: [isStepCount(12), hasToolCall("start_walk")],
+    stopWhen: [isStepCount(12), hasToolCall("start_walk"), stopAfterRepeatedToolCalls<NiyvaruTools>(3)],
     repairToolCall: repairToolCallForWeakModels<NiyvaruTools>(),
     timeout: { firstChunkMs: 30_000, chunkMs: 20_000, toolMs: 25_000, stepMs: 180_000 },
     temperature: 0.4,

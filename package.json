@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check": "npm run build && node scripts/check-build.mjs",
     "preview": "vite preview",
     "data": "node data/build-data.mjs",
     "worker:dev": "wrangler dev --config worker/wrangler.toml",
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.94",
+    "adhan": "^4.4.3",
     "@ai-sdk/react": "^4.0.183",
     "@fontsource-variable/cormorant-garamond": "^5.3.0",
     "@fontsource-variable/dm-sans": "^5.3.0",
@@ -23,7 +25,6 @@
     "ai": "^7.0.179",
     "idb": "^8.0.4",
     "maplibre-gl": "^6.19.0",
-    "pmtiles": "^4.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.6.7"
@@ -33,7 +34,6 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "adhan": "^4.4.3",
     "typescript": "^5.9.0",
     "vite": "^7.1.0",
     "wrangler": "^4.166.0"

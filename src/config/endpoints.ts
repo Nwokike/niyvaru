@@ -54,13 +54,16 @@ export const endpoints = {
   },
 
   tiles: {
-    openFreeMapStyle: "https://tiles.openfreemap.org/styles/liberty",
-    planetPmtiles: "https://tiles.openfreemap.org/planet",
+    /** Minimal flat vector base; the app re-grades every layer by role. */
+    openFreeMapStyle: "https://tiles.openfreemap.org/styles/positron",
+    attributionHtml:
+      'Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrarium tiles (AWS Open Data)</a>',
   },
 
   terrain: {
-    /** Mapterhorn — keyless global elevation (Terrarium PMTiles). */
-    mapterhornTilejson: "https://tiles.mapterhorn.com/tilejson.json",
+    /** AWS Terrarium PNG tiles — keyless, CORS, global. */
+    terrariumTiles: "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+    exaggeration: 1.6,
   },
 
   routing: {

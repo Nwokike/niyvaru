@@ -1,7 +1,8 @@
 /**
  * Compact, grounded facts block — everything the agent may claim about the
- * current area, small enough for any free model's window. Place ids are
- * included so tool calls can reference real things.
+ * current area, small enough for any free model's window. Every place id
+ * listed below is ready to use directly in tool calls — reuse those ids and
+ * their facts instead of re-searching for the same places.
  */
 import type { AreaPack, Place } from "../sources/types";
 
@@ -34,7 +35,7 @@ export function areaFacts(pack: AreaPack): string {
   lines.push(`PLACE COUNTS: ${[...counts.entries()].map(([k, n]) => `${n} ${k}`).join(", ") || "none"}`);
 
   const featured = pack.places.slice(0, MAX_PLACES);
-  lines.push(`PLACES (id | name | kind | distance | facts) — reference these ids in tool calls:`);
+  lines.push(`PLACES (id | name | kind | distance | facts) — these listed ids are ready to use directly in tool calls; reuse them instead of searching again:`);
   for (const p of featured) lines.push(placeLine(p));
 
   if (pack.routes.length) {

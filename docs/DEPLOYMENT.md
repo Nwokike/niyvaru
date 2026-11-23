@@ -1,108 +1,87 @@
-# Deployment ($0)
+# Deployment
 
-## Primary: GitHub Pages (test / non-commercial)
+## Primary: GitHub Pages
 
-`.github/workflows/pages.yml` builds with `VITE_BASE=/niyvaru/` and deploys the
-`dist/` output to GitHub Pages on every push to `master` (or `main`). The site
-is live at **https://nwokike.github.io/niyvaru/**. No API process, no Worker and
-no configuration is needed — chat calls the gateway directly from the browser.
+`.github/workflows/pages.yml` runs on pushes to `master` or `main` and on manual dispatch. It uses Node 24, runs `npm ci`, builds with `VITE_BASE=/niyvaru/`, uploads `dist/` and deploys with the official Pages actions. The project site is `https://nwokike.github.io/niyvaru/`. No API process, Worker, database or build-time data job is involved.
 
-Enablement (already done for this repo): Settings → Pages → Source = GitHub
-Actions, and the repo must be public on a Free account.
+Enablement: repository Settings → Pages → Source = **GitHub Actions**. The workflow declares `contents: read`, `pages: write` and `id-token: write`, and cancels superseded builds in the `pages` concurrency group.
 
-To reproduce a build locally:
+Reproduce the published build locally:
 
 ```bash
-npm install
+npm ci
 VITE_BASE=/niyvaru/ npm run build
+npm run preview
 ```
 
-## Optional: Cloudflare (server-side mode)
+`vite.config.ts` reads `VITE_BASE` from the build environment (not from `.env`), so the same source builds at `/` for local development and at `/niyvaru/` on Pages.
 
-### Prerequisites
+## What lands in `dist/`
 
-- A Cloudflare account on the **Free** plan (no card needed).
-- Node 24 + npm 11 locally.
-- `wrangler login` completed once, or `CLOUDFLARE_API_TOKEN` in CI.
+- `index.html`, `areas.json`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `brand/`
+- hashed JS/CSS chunks, with lazy `maplibre`, `agent` and `search` bundles
+- `assets/maplibre-gl-worker.mjs`
 
-### 1. Build and deploy the static site
+The worker file is copied from `node_modules/maplibre-gl/dist/` by a `closeBundle` plugin in `vite.config.ts`. MapLibre v6 derives its worker URL relative to `import.meta.url` (`./maplibre-gl-worker.mjs`), and Vite never emits that file from the dynamic reference, so without the copy the map 404s its worker on any static host. Browser-side asset URLs go through `import.meta.env.BASE_URL`: `featuredAreas()` and `promotionsFor()` fetch `BASE_URL + "areas.json"` / `"promotions.json"`, `main.tsx` registers `BASE_URL + "sw.js"`, and the homepage watermark uses `BASE_URL + "brand/..."`. The service worker itself uses relative paths from its own scope.
+
+## Optional: Cloudflare Worker mode
+
+Nothing in the product requires the Worker; it exists for capabilities a browser cannot do (setting an identifying User-Agent for MET Norway) and for proxy use cases. The client enables it by setting `VITE_API_BASE` at build time.
+
+### Local development
 
 ```bash
-npm install
-npm run build                 # runs tsc -b and vite build -> dist/
-npx wrangler pages deploy dist --project-name niyvaru
+cp worker/.dev.vars.example worker/.dev.vars   # set GATEWAY_SECRET
+npm run api:dev                                # plain Node on :8787
+# or: npm run worker:dev
+VITE_API_BASE=http://127.0.0.1:8787 npm run dev
 ```
 
-Cloudflare Pages free limits: 20,000 files/site, 25 MiB per asset, 500 builds
-per month, one concurrent build. Our `dist/` plus packs is far below that.
+`vite.config.ts` proxies `/api` to `NIYVARU_API_TARGET` (default `http://127.0.0.1:8787`). `npm run api:dev` imports the exact Worker handler in Node for environments where `workerd` cannot start (for example Alpine/musl).
 
-To connect Pages to GitHub instead of direct upload: Cloudflare dashboard →
-Workers & Pages → Create → Pages → Connect to Git → repo `Nwokike/niyvaru`,
-build command `npm run build`, output directory `dist`. Set the Node version to
-24 in the build environment if the UI offers it.
-
-## 2. Deploy and configure the Worker
+### Deployment
 
 ```bash
 npx wrangler secret put GATEWAY_SECRET --config worker/wrangler.toml
 npx wrangler deploy --config worker/wrangler.toml
 ```
 
-`GATEWAY_URL` defaults to `https://api.kiri.ng` in `worker/wrangler.toml`;
-override it with `wrangler secret put GATEWAY_URL` only if you use a different
-gateway. Verify:
+`worker/wrangler.toml` sets `GATEWAY_URL=https://api.kiri.ng` as a var; `GATEWAY_SECRET` is a secret, and `WEATHER_CONTACT` can be set as a var or secret to identify MET Norway requests. Routes:
 
-```bash
-curl https://<your-worker>.workers.dev/api/health
-# {"ok":true,"service":"niyvaru-api","gateway":"https://api.kiri.ng"}
-```
+| Route | Response |
+|---|---|
+| `GET /api/health` | `{ ok: true, service: "niyvaru-api" }` |
+| `POST /api/chat` | gateway `POST /chat` passthrough, `text/event-stream` |
+| `POST /api/memory` | non-streaming gateway call |
+| `GET /api/weather` | MET Norway compact forecast with a User-Agent |
 
-Then add a route so the deployed site's `/api/*` goes to the Worker (Cloudflare
-dashboard → Workers → the Worker → Triggers → Routes), e.g.
-`niyvaru.pages.dev/api/*`. If you deploy via your own domain, use that domain
-in the route pattern.
+Missing `GATEWAY_SECRET` returns 500 with an explanatory body; upstream failures return 502. CORS is open. In Worker mode `src/sources/weather.ts` tries `GET {VITE_API_BASE}/api/weather` first, then the direct providers. The agent itself still uses the browser gateway adapter; `/api/chat` and `/api/memory` are available for other clients.
 
-### 3. Local development against the deployed API
+To serve a static build from Cloudflare Pages instead of GitHub Pages: build with `npm run build` (base `/`) and deploy `dist/`, or connect the repo with build command `npm run build` and output `dist`. Add a route such as `niyvaru.pages.dev/api/*` to the Worker only if you use Worker mode.
 
-For the optional Worker mode, set `VITE_API_BASE=https://<your-worker>.workers.dev`
-when building; `vite.config.ts` also proxies `/api` to `NIYVARU_API_TARGET`
-(default `http://127.0.0.1:8787`) for local development.
+## Verify a deployment
 
-## 4. Data refresh
-
-The workflow `.github/workflows/data.yml` rebuilds packs daily and commits them
-when they change. It runs on `master` and `main`, on manual dispatch, and on
-`data/**` pushes. If you deploy with direct upload, re-run `npm run build` and
-`wrangler pages deploy dist` after a pack refresh. A Git-connected Pages project
-rebuilds automatically on the pack commit.
-
-## 5. Verify a production deployment
-
-1. Open the site: map renders and POI pins are visible.
-2. In Worker mode, check `GET /api/health`.
-3. Ask "walk me to a pharmacy" — a route appears and the walk overlay plays.
-4. Check the Ops tab: profile fields are editable and memory clears.
-5. `curl -I /packs/index.json` — should be 200 with a cache header.
+1. Open the site: the brand homepage renders; pick or search an area and submit.
+2. Watch the assembly loader: places, photos, story, routes and pulse settle with counts, then the map reveals.
+3. Check the map: 3D buildings and terrain, POI colours, and the hour slider. Relighting should be immediate.
+4. Open Discover Dossier, use the arrow keys, and start a walk; the HUD shows distance and progress without covering the chat.
+5. Check Happening, Story and Memory; the agent greets you in the language detected from the browser.
+6. In Worker mode, `GET /api/health` returns `ok: true`.
+7. `curl -I https://nwokike.github.io/niyvaru/areas.json` returns 200.
 
 ## Rollback
 
-Pages keeps previous deployments in the dashboard; select an earlier one and
-promote it. For the Worker, `wrangler deployments list` shows versions; use
-`wrangler rollback` (or re-deploy a known-good commit).
+GitHub Pages keeps earlier deployments in the environment history; promote a previous one. For the Worker, `wrangler deployments list` shows versions and `wrangler rollback` restores one. Browser caches keep older packs and memory on-device; a fresh assembly replaces a stale pack automatically.
 
-## Cost checklist
+## Cost
 
-| Item | Cost on Free |
+| Item | Cost |
 |---|---|
-| GitHub repo, Actions, Pages | $0 (Pages needs a public repo on Free) |
-| Cloudflare Pages | $0 |
-| Cloudflare Workers | $0 up to 100k requests/day |
-| OpenFreeMap, OSM/Overpass, Panoramax, EONET, OSRM demo | $0 |
-| Open-Meteo open tier | $0, non-commercial only |
-| Kiri Gateway | $0 within your own free provider rosters |
-| App stores (optional, not part of prototype) | iOS $99/year, Google Play $25 once |
+| GitHub repo, Actions, Pages | $0 on the free plan (Pages requires a public repo) |
+| Cloudflare Pages / Workers (optional) | $0 within free-plan limits |
+| OpenFreeMap, OSM/Overpass, Photon/Nominatim, Wikimedia, Panoramax, Mapillary, OSRM, AWS Terrarium, GDELT, Mastodon, Bluesky, MET Norway | $0 |
+| Open-Meteo fallback | $0, non-commercial terms |
+| Kiri Gateway | $0 within its free provider roster |
+| App stores (not part of this web app) | iOS $99/year, Google Play $25 once |
 
-## What is deliberately absent
-
-D1, R2, Vectorize, paid maps, paid LLM APIs, a container, and a server to start.
-If you add any of them, update this file and the cost checklist in the README.
+No D1, R2, paid LLM API, paid geocoder, container or always-on server is used. Adding one changes this document and the cost section of the README in the same PR.

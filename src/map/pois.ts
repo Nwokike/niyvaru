@@ -37,7 +37,10 @@ function placeFeature(place: Place): Feature {
 }
 
 export function addPlaceLayers(map: MLMap): void {
-  map.addSource("places", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  if (!map.getSource("places")) {
+    map.addSource("places", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  }
+  if (map.getLayer("places-halo")) return;
   map.addLayer({
     id: "places-halo",
     type: "circle",
@@ -69,11 +72,11 @@ export function addPlaceLayers(map: MLMap): void {
   });
 }
 
-export function setPlaces(map: MLMap, places: Place[]): void {
+export function setPlaces(map: MLMap, places: Place[], max = 1200): void {
   const source = map.getSource("places") as maplibregl.GeoJSONSource | undefined;
   source?.setData({
     type: "FeatureCollection",
-    features: places.map(placeFeature),
+    features: places.slice(0, max).map(placeFeature),
   });
 }
 
@@ -90,8 +93,9 @@ export function setKindFilter(map: MLMap, kinds: string[] | null): void {
 }
 
 export function addRouteLayers(map: MLMap): void {
+  if (map.getLayer("route-core")) return;
   // lineMetrics enables line-gradient along the walked distance
-  map.addSource("route", {
+  if (!map.getSource("route")) map.addSource("route", {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
     lineMetrics: true,
@@ -151,12 +155,21 @@ export function showRoute(map: MLMap, route: WalkRoute | null, fit = true): void
   if (fit && route.coordinates.length > 1) {
     const lons = route.coordinates.map((c) => c[0]);
     const lats = route.coordinates.map((c) => c[1]);
+    const w = map.getContainer().clientWidth || window.innerWidth;
+    const narrow = w < 720;
     map.fitBounds(
       [
         [Math.min(...lons), Math.min(...lats)],
         [Math.max(...lons), Math.max(...lats)],
       ],
-      { padding: { top: 80, bottom: 340, left: 80, right: 400 }, duration: 900, pitch: 45, maxZoom: 17 }
+      {
+        padding: narrow
+          ? { top: 96, bottom: Math.round(window.innerHeight * 0.58), left: 24, right: 24 }
+          : { top: 80, bottom: Math.min(340, Math.round(window.innerHeight * 0.42)), left: 80, right: 360 },
+        duration: 900,
+        pitch: 45,
+        maxZoom: 17,
+      }
     );
   }
 }

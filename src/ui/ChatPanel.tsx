@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DirectChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import type { NiyvaruAgent } from "../agent/runtime";
@@ -15,6 +15,7 @@ export function ChatPanel({
   greeting,
   suggestions,
   chatLabel,
+  prefill,
   onTurnComplete,
 }: {
   d: Dictionary;
@@ -22,6 +23,7 @@ export function ChatPanel({
   greeting: string;
   suggestions: string[];
   chatLabel: string;
+  prefill?: string;
   onTurnComplete: (userText: string, assistantText: string) => void;
 }) {
   const transport = useMemo(
@@ -49,6 +51,13 @@ export function ChatPanel({
     },
   });
   const [input, setInput] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!prefill) return;
+    setInput(prefill);
+    inputRef.current?.focus();
+  }, [prefill]);
 
   const busy = status === "submitted" || status === "streaming";
   const send = (): void => {
@@ -117,6 +126,7 @@ export function ChatPanel({
       </div>
       <div className="chat-input">
         <input
+          ref={inputRef}
           className="field"
           value={input}
           placeholder={d.explore.askPlaceholder}

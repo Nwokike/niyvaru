@@ -38,7 +38,7 @@ export function BriefPanel({ d, pack }: { d: Dictionary; pack: AreaPack }) {
           ) : null}
         </div>
       ) : (
-        <p className="muted">{d.pulse.empty}</p>
+        <p className="muted">{d.brief.noStory}</p>
       )}
 
       <div className="panel-card">

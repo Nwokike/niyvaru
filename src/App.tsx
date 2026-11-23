@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NiyvaruAgent } from "./agent/runtime";
 import type { MapApi } from "./map/mapView";
 import { getOrAssembleArea } from "./area/store";
@@ -9,7 +9,7 @@ import { fetchFramesForRoute, matchFramesToRoute } from "./walk/matcher";
 import { startWalk, type WalkHandle } from "./walk/player";
 import { addChatMessage } from "./memory/store";
 import { KIND_GROUPS } from "./brand/tokens";
-import { dict, applyDocumentLocale, type Locale } from "./config/i18n";
+import { dict, applyDocumentLocale, type Locale, type Dictionary } from "./config/i18n";
 import { Assembling } from "./ui/Assembling";
 import { Intake } from "./ui/Intake";
 import { PlaceCard } from "./ui/PlaceCard";
@@ -17,8 +17,10 @@ import { DiscoverDossier } from "./ui/DiscoverDossier";
 import { PulsePanel } from "./ui/PulsePanel";
 import { BriefPanel } from "./ui/BriefPanel";
 import { MemoryPanel } from "./ui/MemoryPanel";
-import { ChatPanel } from "./ui/ChatPanel";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "./sources/types";
+
+const ChatPanel = lazy(() => import("./ui/ChatPanel").then((m) => ({ default: m.ChatPanel })));
+
 import type { TimePhase } from "./agent/tools";
 
 type View = "form" | "assembling" | "explore";
@@ -35,12 +37,16 @@ const EMPTY_STAGES: Record<StageKey, StageView> = {
 
 const PHASE_T: Record<TimePhase, number> = { dawn: 0, day: 1 / 3, golden: 2 / 3, night: 1 };
 // Named stops on the 24h dial (Sete Colinas pattern)
-const TOD_STOPS: { label: string; hour: number }[] = [
-  { label: "Dawn", hour: 6.5 },
-  { label: "Midday", hour: 13 },
-  { label: "Golden", hour: 18.5 },
-  { label: "Night", hour: 23 },
+const TOD_STOPS: { key: TimePhase; label: string; hour: number }[] = [
+  { key: "dawn", label: "Dawn", hour: 6.5 },
+  { key: "day", label: "Midday", hour: 13 },
+  { key: "golden", label: "Golden", hour: 18.5 },
+  { key: "night", label: "Night", hour: 23 },
 ];
+
+function todLabel(d: Dictionary, stop: (typeof TOD_STOPS)[number]): string {
+  return d.explore.timeOfDay[stop.key];
+}
 
 function todClock(hour: number): string {
   const hh = Math.floor(hour % 24);
@@ -87,6 +93,9 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [areas, setAreas] = useState<AreaMeta[]>([]);
   const [discoverIndex, setDiscoverIndex] = useState(0);
+  const [chatPrefill, setChatPrefill] = useState("");
+  const todRef = useRef(tod);
+  todRef.current = tod;
 
   const discoverPlaces = useMemo(() => {
     if (!pack) return [];
@@ -206,8 +215,9 @@ export function App() {
   useEffect(() => {
     if (!meta || !mapEl.current) return;
     let disposed = false;
+    const mapController = new AbortController();
     const apiPromise = import("./map/mapView")
-      .then(({ initMap }) => initMap(mapEl.current!, meta))
+      .then(({ initMap }) => initMap(mapEl.current!, meta, mapController.signal, todRef.current))
       .then((api) => {
         if (disposed) {
           api.destroy();
@@ -233,6 +243,7 @@ export function App() {
       });
     return () => {
       disposed = true;
+      mapController.abort();
       void apiPromise.then((api) => api?.destroy());
       mapRef.current = null;
     };
@@ -264,7 +275,7 @@ export function App() {
           void beginWalk(route);
         },
         setTimeOfDay(phase: TimePhase) {
-          const hour = TOD_STOPS.find((s) => s.label.toLowerCase() === phase)?.hour ?? 18.5;
+          const hour = TOD_STOPS.find((s) => s.key === phase)?.hour ?? 18.5;
           mapRef.current?.setHour(hour);
           setTod(hour);
         },
@@ -321,7 +332,13 @@ export function App() {
         frames,
         reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
         labels: {
+          eyebrow: d.walk.eyebrow,
           stop: d.walk.stop,
+          pause: d.walk.pause,
+          resume: d.walk.resume,
+          eta: (n: number) => d.walk.eta.replace("{n}", String(n)),
+          streetFrame: (n: number) => d.walk.streetFrame.replace("{n}", String(n)),
+          of: d.walk.of,
           realFrames: (n: number) => d.walk.realFrames.replace("{n}", String(n)),
           routeOnly: d.walk.routeOnly,
         },
@@ -416,15 +433,15 @@ export function App() {
                 title={d.tabs.pulse}
               >
                 {pack.weather[0] ? `🌤 ${pack.weather[0].tempMaxC}°C ` : ""}
-                {pack.prayer[0] ? `· 🕌 ${pack.prayer[0].asr ? `Asr ${pack.prayer[0].asr}` : pack.prayer[0].date} ` : ""}
-                · {nearestStop(tod).label}
+                {pack.prayer[0] ? `· 🕌 ${pack.prayer[0].asr ? `${d.pulse.sources.prayer} ${pack.prayer[0].asr}` : pack.prayer[0].date} ` : ""}
+                · {todLabel(d, nearestStop(tod))}
               </button>
             ) : null}
             <div className="topbar-actions">
               <div className="tod" role="group" aria-label={d.explore.timeOfDay.day}>
                 <div className="tod-readout">
                   <span className="tod-clock">{todClock(tod)}</span>
-                  <span className="tod-phase">· {nearestStop(tod).label}</span>
+                  <span className="tod-phase">· {todLabel(d, nearestStop(tod))}</span>
                 </div>
                 <input
                   className="tod-slider"
@@ -438,8 +455,8 @@ export function App() {
                 />
                 <div className="tod-stops">
                   {TOD_STOPS.map((stop) => (
-                    <button key={stop.label} data-active={nearestStop(tod).label === stop.label && Math.abs(tod - stop.hour) < 0.15} onClick={() => applyTod(stop.hour)}>
-                      {stop.label}
+                    <button key={stop.key} data-active={nearestStop(tod).key === stop.key && Math.abs(tod - stop.hour) < 0.15} onClick={() => applyTod(stop.hour)}>
+                      {todLabel(d, stop)}
                     </button>
                   ))}
                 </div>
@@ -491,7 +508,12 @@ export function App() {
                       currentIndex={discoverIndex}
                       onSelectIndex={selectDiscoverIndex}
                       walking={walking}
+                      keyboardEnabled={!showIntake && !walking}
                       onWalk={(p) => void walkToPlace(p)}
+                      onAsk={(p) => {
+                        setTab("explore");
+                        setChatPrefill(d.discover.askAbout.replace("{name}", p.nameEn ?? p.name));
+                      }}
                       onClose={() => {
                         setPlace(null);
                         mapRef.current?.clearFocus();
@@ -521,6 +543,8 @@ export function App() {
                         {discoverPlaces[0].nameEn ?? discoverPlaces[0].name} →
                       </h4>
                     </div>
+                  ) : pack ? (
+                    <p className="muted">{d.discover.noPlaces}</p>
                   ) : null}
                   <div className="chat-suggestions">
                     <button className="chip" data-selected={activeKindGroup === null} onClick={() => setKindGroup(null)}>
@@ -535,14 +559,17 @@ export function App() {
                     )}
                   </div>
                   {agent ? (
-                    <ChatPanel
-                      d={d}
-                      agent={agent}
-                      greeting={d.explore.greeting}
-                      suggestions={[...d.explore.suggestions]}
-                      chatLabel={d.a11y.chatLabel}
-                      onTurnComplete={onTurnComplete}
-                    />
+                    <Suspense fallback={<p className="muted">{d.common.loading}</p>}>
+                      <ChatPanel
+                        d={d}
+                        agent={agent}
+                        greeting={d.explore.greeting}
+                        suggestions={[...d.explore.suggestions]}
+                        chatLabel={d.a11y.chatLabel}
+                        prefill={chatPrefill}
+                        onTurnComplete={onTurnComplete}
+                      />
+                    </Suspense>
                   ) : (
                     <p className="muted">
                       {agentError ?? d.common.loading}

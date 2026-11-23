@@ -13,6 +13,7 @@
 import * as maplibregl from "maplibre-gl";
 import type { MapOptions, Map as MaplibreMap, StyleSpecification } from "maplibre-gl";
 import { debugLog, debugError } from "../debug";
+import { endpoints } from "../config/endpoints";
 import { paletteAt, type HourPalette } from "./palette";
 
 type Role =
@@ -36,12 +37,16 @@ export interface RegradedStyle {
   map: MaplibreMap;
   roles: RoleRef[];
   lastHour: number | null;
+  lowPower: boolean;
+  /** Increments on every style load, including fallback replacements. */
+  styleEpoch: number;
   /** Resolves on style.load — do not wait for MapLibre's `load`, which can
    *  stall indefinitely behind DEM tiles on slow connections. */
   ready: Promise<void>;
 }
 
-const DEM_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+export type RegradeOptions = Partial<MapOptions> & { lowPower?: boolean };
+
 const TERRAIN_SOURCE = "niyvaru-terrain-dem";
 const HILLSHADE_SOURCE = "niyvaru-hillshade-dem";
 const BUILDINGS_LAYER = "niyvaru-buildings";
@@ -50,20 +55,23 @@ export const TERRAIN_SOURCES = { terrain: TERRAIN_SOURCE, hillshade: HILLSHADE_S
 
 export async function loadRegradedStyle(
   container: HTMLElement,
-  options?: Partial<MapOptions>
+  options?: RegradeOptions
 ): Promise<RegradedStyle> {
   debugLog("map", "constructing Map with positron URL — maplibre fetches the style itself");
+  const { lowPower = false, ...mapOptions } = options ?? {};
   const map = new maplibregl.Map({
     container,
-    style: "https://tiles.openfreemap.org/styles/positron",
-    attributionControl: { compact: true, customAttribution: 'Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrarium tiles (AWS Open Data)</a>' },
-    ...options,
+    style: endpoints.tiles.openFreeMapStyle,
+    attributionControl: { compact: true, customAttribution: endpoints.tiles.attributionHtml },
+    ...mapOptions,
   });
   let markReady: () => void = () => {};
+  let fallbackApplied = false;
   const ready = new Promise<void>((resolve) => { markReady = resolve; });
-  const regraded: RegradedStyle = { map, roles: [], lastHour: null, ready };
+  const regraded: RegradedStyle = { map, roles: [], lastHour: null, lowPower, styleEpoch: 0, ready };
   map.on("style.load", () => {
     debugLog("map", "style.load — classifying layers, adding terrain");
+    regraded.styleEpoch += 1;
     setup(regraded);
     if (regraded.lastHour != null) applyPalette(regraded, regraded.lastHour);
     markReady();
@@ -77,7 +85,8 @@ export async function loadRegradedStyle(
       map.setTerrain(null);
       return;
     }
-    if (!map.isStyleLoaded() || (e as { sourceId?: string }).sourceId) {
+    if (!fallbackApplied && (!map.isStyleLoaded() || (e as { sourceId?: string }).sourceId)) {
+      fallbackApplied = true;
       debugError("map", "basemap error — falling back to bare terrain", message);
       map.setStyle({
         version: 8,
@@ -92,6 +101,7 @@ export async function loadRegradedStyle(
 /** Role classification — verbatim Sete Colinas rules, on Positron layer ids. */
 function setup(regraded: RegradedStyle): void {
   const map = regraded.map;
+  const lowPower = regraded.lowPower;
   const style = map.getStyle();
   const vectorSource = Object.entries(style.sources ?? {}).find(([, s]) => (s as { type: string }).type === "vector")?.[0];
 
@@ -126,13 +136,20 @@ function setup(regraded: RegradedStyle): void {
   }
   debugLog("map", `roles assigned: ${regraded.roles.length} of ${style.layers?.length ?? 0} layers painted`);
 
+  // Low-power mobile devices keep the flat brand palette and skip the
+  // expensive DEM + extrusion work; the map is still fully readable.
+  if (lowPower) {
+    map.setTerrain(null);
+    return;
+  }
+
   // Terrain + hillshade: two sources of the same AWS Terrarium tiles
   // (MapLibre advises against sharing one source between both).
   if (!map.getSource(TERRAIN_SOURCE)) {
-    map.addSource(TERRAIN_SOURCE, { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
+    map.addSource(TERRAIN_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
   }
   if (!map.getSource(HILLSHADE_SOURCE)) {
-    map.addSource(HILLSHADE_SOURCE, { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
+    map.addSource(HILLSHADE_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
   }
   const firstLineId = style.layers?.find((l) => l.type === "line")?.id;
   if (!map.getLayer(HILLSHADE_SOURCE)) {
@@ -166,7 +183,7 @@ function setup(regraded: RegradedStyle): void {
       firstLineId
     );
   }
-  map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1.6 });
+  map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: endpoints.terrain.exaggeration });
 }
 
 function buildingColor(p: HourPalette): unknown {
@@ -241,7 +258,7 @@ export function setLabelLanguage(map: MaplibreMap, lang: string): void {
       ? ["coalesce", ["get", "name:ar"], ["get", "name:latin"], ["get", "name"]]
       : ["coalesce", ["get", "name:latin"], ["get", "name"]];
   for (const layer of map.getStyle().layers) {
-    if (layer.type !== "symbol") continue;
+    if (layer.type !== "symbol" || layer.id === "places-label") continue;
     try {
       map.setLayoutProperty(layer.id, "text-field", field as never);
     } catch {

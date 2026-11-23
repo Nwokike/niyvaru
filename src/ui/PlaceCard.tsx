@@ -1,4 +1,5 @@
 import { openingHoursAt } from "../sources/openingHours";
+import { safeWebsiteHost, safeWebsiteUrl } from "../sources/text";
 import type { Dictionary } from "../config/i18n";
 import type { Place } from "../sources/types";
 
@@ -17,6 +18,8 @@ export function PlaceCard({
 }) {
   const status = place.tags.openingHours ? openingHoursAt(place.tags.openingHours) : { state: "unknown" as const };
   const name = place.nameEn ?? place.name;
+  const website = safeWebsiteUrl(place.tags.website);
+  const websiteHost = safeWebsiteHost(place.tags.website);
 
   return (
     <div className="place-card rise" aria-live="polite">
@@ -41,9 +44,9 @@ export function PlaceCard({
       {place.tags.phone || place.tags.website || place.tags.addrStreet ? (
         <div className="place-meta">
           {place.tags.phone ? <span>☎ {place.tags.phone}</span> : null}
-          {place.tags.website ? (
-            <a href={place.tags.website} target="_blank" rel="noreferrer" className="muted" style={{ color: "var(--bronze-deep)" }}>
-              {new URL(place.tags.website.startsWith("http") ? place.tags.website : `https://${place.tags.website}`).host}
+          {website && websiteHost ? (
+            <a href={website} target="_blank" rel="noreferrer" className="muted" style={{ color: "var(--bronze-deep)" }}>
+              {websiteHost}
             </a>
           ) : null}
           {place.tags.addrStreet ? <span>{[place.tags.addrNumber, place.tags.addrStreet].filter(Boolean).join(" ")}</span> : null}
@@ -53,8 +56,17 @@ export function PlaceCard({
       {place.photos.length ? (
         <div className="place-photos">
           {place.photos.map((photo, i) => (
-            <figure key={i} style={{ margin: 0, position: "relative" }} title={`${photo.attribution}${photo.license ? ` · ${photo.license}` : ""}`}>
-              <img src={photo.thumbUrl} alt={`${name} — ${photo.attribution}`} loading="lazy" />
+            <figure
+              key={i}
+              style={{ margin: 0, position: "relative" }}
+              title={`${photo.attribution}${photo.license ? ` · ${photo.license}` : ""}`}
+            >
+              <img
+                src={photo.thumbUrl}
+                alt={`${name} — ${photo.attribution}`}
+                loading="lazy"
+                onError={(e) => e.currentTarget.parentElement?.style.setProperty("display", "none")}
+              />
             </figure>
           ))}
         </div>

@@ -5,7 +5,9 @@
  * as the places land. Every stage streams live counts so the traveller
  * watches the place being built, not a spinner.
  */
-import { cached, savePack } from "./cache";
+import { savePack } from "./cache";
+import { anchoredPhotosNear } from "./commons";
+import { matchByTitle, matchByTitleScore } from "./photoMatch";
 import { fetchPlacesSharded, type ShardProgress } from "./overpass";
 import { fetchPlacesFromOsmMap } from "./osmMap";
 import { storiesNear } from "./wikipedia";
@@ -88,6 +90,11 @@ function nearest(lat: number, lon: number, places: Place[], withinM: number): Pl
   return best;
 }
 
+/** A Commons photo can sit a few hundred metres from the OSM node that names it. */
+const PHOTO_MATCH_RADIUS_M = 300;
+/** Bounded galleries: keep the strongest photos only, never unbounded lists. */
+const MAX_PHOTOS_PER_PLACE = 6;
+
 async function optional<T>(run: (signal?: AbortSignal) => Promise<T>): Promise<T | undefined> {
   try {
     return await run();
@@ -115,76 +122,6 @@ async function runStage<T>(
   }
 }
 
-/** Commons geosearch WITH file positions (the API returns coordinates per file). */
-interface AnchoredPhoto {
-  photo: Photo;
-  lat: number;
-  lon: number;
-}
-
-async function commonsAnchoredPhotos(meta: AreaMeta, signal?: AbortSignal): Promise<AnchoredPhoto[]> {
-  return cached(
-    `commons-pos:${meta.lat.toFixed(4)},${meta.lon.toFixed(4)},${meta.radiusM}`,
-    7 * 24 * 3600_000,
-    async () => {
-      const params = new URLSearchParams({
-        action: "query",
-        format: "json",
-        origin: "*",
-        generator: "geosearch",
-        ggscoord: `${meta.lat}|${meta.lon}`,
-        ggsradius: String(Math.min(meta.radiusM, 10000)),
-        ggslimit: "120",
-        gsnamespace: "6",
-        prop: "coordinates|imageinfo",
-        iiprop: "url|extmetadata",
-        iiurlwidth: "640",
-      });
-      const res = await fetch(`https://commons.wikimedia.org/w/api.php?${params}`, { signal });
-      if (!res.ok) throw new Error(`commons ${res.status}`);
-      const json = (await res.json()) as {
-        query?: {
-          pages?: Record<
-            string,
-            {
-              title: string;
-              coordinates?: { lat: number; lon: number }[];
-              imageinfo?: {
-                url: string;
-                thumburl?: string;
-                extmetadata?: { Artist?: { value: string }; LicenseShortName?: { value: string } };
-              }[];
-            }
-          >;
-        };
-      };
-      const out: AnchoredPhoto[] = [];
-      for (const page of Object.values(json.query?.pages ?? {})) {
-        const info = page.imageinfo?.[0];
-        const coord = page.coordinates?.[0];
-        if (!info?.url || !coord) continue;
-        if (!/\.(jpe?g|png|webp)$/i.test(info.url.split("?")[0] ?? "")) continue;
-        const strip = (s: string | undefined): string | undefined => {
-          const text = s?.replace(/<[^>]*>/g, "").trim();
-          return text || undefined;
-        };
-        out.push({
-          photo: {
-            url: info.url,
-            thumbUrl: info.thumburl ?? info.url,
-            attribution: strip(info.extmetadata?.Artist?.value) ?? page.title,
-            license: strip(info.extmetadata?.LicenseShortName?.value),
-            source: "commons" as const,
-          },
-          lat: coord.lat,
-          lon: coord.lon,
-        });
-      }
-      return out;
-    }
-  );
-}
-
 /** Optional per-area promotional placements — data files, never code. */
 async function promotionsFor(meta: AreaMeta, signal?: AbortSignal): Promise<PulseItem[]> {
   return optional(async () => {
@@ -210,24 +147,6 @@ function weatherPulseItem(day: AreaPack["weather"][number], meta: AreaMeta): Pul
     text: `${day.precipitationMm} mm precipitation, wind up to ${day.windMaxKmh} km/h.`,
     at: new Date().toISOString(),
   };
-}
-
-function matchByTitle(title: string, places: Place[]): Place | undefined {
-  const lowered = title.toLowerCase();
-  let best: Place | undefined;
-  let bestScore = 0;
-  for (const p of places) {
-    const name = (p.nameEn ?? p.name).toLowerCase();
-    let score = 0;
-    if (name === lowered) score = 3;
-    else if (name.includes(lowered) || lowered.includes(name)) score = 2;
-    else if (name.split(/\s+/).some((w) => w.length > 3 && lowered.includes(w))) score = 1;
-    if (score > bestScore) {
-      bestScore = score;
-      best = p;
-    }
-  }
-  return bestScore >= 2 ? best : undefined;
 }
 
 export async function assembleArea(
@@ -264,7 +183,7 @@ export async function assembleArea(
 
   const photosPromise = runStage("photos", onStage, async () => {
     const [commons, pano] = await Promise.all([
-      optional(() => commonsAnchoredPhotos(meta, signal)),
+      optional(() => anchoredPhotosNear(meta.lat, meta.lon, meta.radiusM, 120, signal)),
       optional(() => panoramaxNear(meta.lat, meta.lon, meta.radiusM, 60, signal)),
     ]);
     if (pano) attribution["Panoramax contributors"] = "CC-BY-SA 4.0";
@@ -347,20 +266,64 @@ export async function assembleArea(
     routesPromise,
   ]);
 
-  // ——— attach photographs to their nearest place; leftovers become hero candidates ———
+  // ——— attach photographs by position, with a file-name fallback ———
   onStage({ key: "photos", state: "active", detail: "matching photographs to places" });
-  const heroCandidates: Photo[] = [];
-  for (const anchored of photoData.commons) {
-    const owner = nearest(anchored.lat, anchored.lon, places, 150);
-    if (owner && owner.photos.length < 4) owner.photos.push(anchored.photo);
-    else heroCandidates.push(anchored.photo);
+  const placesById = new Map(places.map((p) => [p.id, p]));
+  interface PhotoAssignment {
+    placeId: string;
+    photo: Photo;
+    score: number;
   }
+  const assignments: PhotoAssignment[] = [];
+  for (const anchored of photoData.commons) {
+    const titleMatch =
+      (anchored.objectName ? matchByTitleScore(anchored.objectName, places) : undefined) ??
+      matchByTitleScore(anchored.title, places);
+    let geo: { place: Place; distanceM: number } | undefined;
+    let bestD = PHOTO_MATCH_RADIUS_M;
+    for (const place of places) {
+      const d = haversineM(anchored.lat, anchored.lon, place.lat, place.lon);
+      if (d < bestD) {
+        bestD = d;
+        geo = { place, distanceM: d };
+      }
+    }
+    // Coordinates decide the primary owner; a matching name is a tie-breaker.
+    if (geo) {
+      assignments.push({
+        placeId: geo.place.id,
+        photo: anchored.photo,
+        score: 1000 - geo.distanceM + (titleMatch?.place.id === geo.place.id ? titleMatch.score * 20 : 0),
+      });
+    }
+    // Named-but-unplaced files still belong somewhere — the name is the fallback.
+    if (titleMatch && titleMatch.place.id !== geo?.place.id) {
+      assignments.push({
+        placeId: titleMatch.place.id,
+        photo: anchored.photo,
+        score: 400 + titleMatch.score * 50,
+      });
+    }
+  }
+  // Strongest matches claim bounded slots first; one photo never lands twice.
+  assignments.sort((a, b) => b.score - a.score);
+  const used = new Set<Photo>();
+  for (const a of assignments) {
+    const place = placesById.get(a.placeId);
+    if (!place || used.has(a.photo) || place.photos.length >= MAX_PHOTOS_PER_PLACE) continue;
+    place.photos.push(a.photo);
+    used.add(a.photo);
+  }
+  const heroCandidates = photoData.commons.filter((a) => !used.has(a.photo)).map((a) => a.photo);
   if (photoData.pano) {
     photoData.pano.frames.forEach((frame, i) => {
       const photo = photoData.pano!.photos[i];
-      if (!photo) return;
-      const owner = nearest(frame.lat, frame.lon, places, 150);
-      if (owner && owner.photos.length < 4) owner.photos.push(photo);
+      if (!photo || used.has(photo)) return;
+      const owner = nearest(frame.lat, frame.lon, places, PHOTO_MATCH_RADIUS_M);
+      if (owner && owner.photos.length < MAX_PHOTOS_PER_PLACE) {
+        owner.photos.push(photo);
+        used.add(photo);
+      }
     });
   }
   counts.photos = photoData.commons.length + (photoData.pano?.photos.length ?? 0);

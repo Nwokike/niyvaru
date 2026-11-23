@@ -10,9 +10,9 @@ export const en = {
     title: "Where would you like to stand?",
     lede: "Search any city on Earth. Niyvaru downloads the real place — streets, buildings, photographs, what's around — and walks you through it.",
     searchPlaceholder: "Search any city or neighbourhood…",
+    noResults: "Nothing found. Try another spelling?",
     featured: "Featured",
     searching: "Searching…",
-    noResults: "Nothing found. Try another spelling?",
     choose: "Explore",
     hint: "Try “Lagos”, “Makkah”, “New York”, “Istanbul”…",
   },
@@ -33,6 +33,17 @@ export const en = {
 
   tabs: { explore: "Explore", pulse: "Happening", brief: "Story", memory: "Memory" },
 
+  discover: {
+    previous: "Previous place",
+    next: "Next place",
+    previousHint: "Previous (←)",
+    nextHint: "Next (→)",
+    ask: "Ask the concierge",
+    askAbout: "Tell me about {name}",
+    source: "Wikipedia",
+    noPlaces: "No places were assembled for this area yet.",
+  },
+
   explore: {
     askPlaceholder: "Ask about this place…",
     send: "Send",
@@ -50,7 +61,12 @@ export const en = {
   },
 
   walk: {
+    eyebrow: "Niyvaru walk",
     stop: "Stop",
+    pause: "Pause",
+    resume: "Resume",
+    eta: "~{n} min left",
+    streetFrame: "Street photograph, heading {n}°",
     realFrames: "{n} real street photographs on this route",
     routeOnly: "No street photographs cover this route yet — flying it instead",
     stepFree: "step-free",
@@ -59,7 +75,7 @@ export const en = {
 
   pulse: {
     title: "Right now in {area}",
-    empty: "Quiet at the moment.",
+    empty: "No live posts or local notes here yet. The weather, prayer times and anything source-backed will appear as soon as they arrive.",
     share: "Share what you see…",
     post: "Post",
     you: "You",
@@ -70,6 +86,7 @@ export const en = {
     title: "The story of {area}",
     from: "From {source}",
     facts: "At a glance",
+    noStory: "No verified narrative has been assembled for this area yet. Explore the real places below — their photographs and notes come from open sources.",
   },
 
   memory: {
@@ -128,6 +145,7 @@ export const en = {
     name: "Name (optional)",
     datesRequired: "Please add your check-in and check-out dates.",
     areaRequired: "Search for a city or pick one from the list to begin.",
+    saveError: "Your answers could not be saved on this device. Try again — nothing has been lost from the form.",
     cta: "Begin exploring",
     privacy: "Your answers are saved on this device only — they teach your concierge what matters. No account, no server.",
   },
