@@ -564,6 +564,7 @@ export function App() {
           area={meta}
           areas={areas}
           locale={locale}
+          homepage={view === "form"}
           onPickArea={selectArea}
           onClose={(chosen) => {
             setShowIntake(false);

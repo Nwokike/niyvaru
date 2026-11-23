@@ -97,6 +97,7 @@ export function Intake({
   area,
   areas,
   locale,
+  homepage,
   onPickArea,
   onClose,
 }: {
@@ -104,6 +105,8 @@ export function Intake({
   area: AreaMeta | null;
   areas: AreaMeta[];
   locale: "en" | "ar";
+  /** The form IS the homepage in this view — even after a city is selected. */
+  homepage: boolean;
   onPickArea: (meta: AreaMeta) => void;
   onClose: (area: AreaMeta | null) => void;
 }) {
@@ -125,8 +128,6 @@ export function Intake({
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
-
-  const isHomepage = !area;
 
   const finish = async (): Promise<void> => {
     const language = locale === "ar" ? "Arabic" : "English";
@@ -369,7 +370,7 @@ export function Intake({
     </div>
   );
 
-  if (isHomepage) {
+  if (homepage) {
     return (
       <div className="home-layout" role="main">
         <div
