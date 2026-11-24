@@ -102,6 +102,7 @@ export async function initMap(
   let activeKinds: string[] | null = null;
   let lastLang: string | null = null;
   let mountedEpoch = -1;
+  let lastFocusedPlaceId: string | null = null;
 
   const restoreCustomLayers = (): void => {
     addPlaceLayers(map);
@@ -126,7 +127,7 @@ export async function initMap(
   debugLog("map", "style ready");
   signal?.throwIfAborted();
 
-  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }), "bottom-right");
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }), "top-left");
 
   mountedEpoch = regraded.styleEpoch;
   restoreCustomLayers();
@@ -168,15 +169,23 @@ export async function initMap(
           if (e.key === "Enter" || e.key === " ") onMarkerClick();
         });
       }
-      // the reference fly: 2.6 s, curve 1.25, respectful of reduced motion
+      // First entry gets the long cinematic flight; repeat stepping stays quick.
       const focusZoom = Math.max(14.5, Math.min(16.8, 16.8 + Math.max(-1.6, 0.75 * Math.log2(Math.max(320, width) / 1440))));
+      const repeat = lastFocusedPlaceId !== null;
+      lastFocusedPlaceId = place.id;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduced) {
+        map.jumpTo({ center: [place.lon, place.lat], zoom: focusZoom, pitch: 60 });
+        return;
+      }
+      map.stop();
       map.flyTo({
         center: [place.lon, place.lat],
         zoom: focusZoom,
         pitch: 60,
-        duration: 2600,
+        duration: repeat ? 800 : 2600,
         curve: 1.25,
-        essential: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        essential: false,
       });
     },
     clearFocus() {

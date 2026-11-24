@@ -35,15 +35,15 @@ function sourceLabel(d: Dictionary, source: PulseItem["source"]): string {
   return (d.pulse.sources as Record<string, string>)[source] ?? source;
 }
 
-function timeAgo(at?: string): string {
+function timeAgo(d: Dictionary, at?: string): string {
   if (!at) return "";
   const delta = Date.now() - new Date(at).getTime();
   const minutes = Math.floor(delta / 60000);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1) return d.pulse.now;
+  if (minutes < 60) return d.pulse.minutesAgo.replace("{n}", String(minutes));
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return d.pulse.hoursAgo.replace("{n}", String(hours));
+  return d.pulse.daysAgo.replace("{n}", String(Math.floor(hours / 24)));
 }
 
 export function PulsePanel({
@@ -124,8 +124,9 @@ export function PulsePanel({
               <span className="pulse-source">{d.pulse.sources.prayer}</span>
               <span>{prayer.date}</span>
             </div>
-            <p>
-              Fajr {prayer.fajr} · Dhuhr {prayer.dhuhr} · Asr {prayer.asr} · Maghrib {prayer.maghrib} · Isha {prayer.isha}
+            <p className="prayer-row">
+              <span>{d.pulse.prayerNames}</span>
+              <span dir="ltr">{[prayer.fajr, prayer.dhuhr, prayer.asr, prayer.maghrib, prayer.isha].join(" · ")}</span>
             </p>
           </div>
         </div>
@@ -145,19 +146,22 @@ export function PulsePanel({
       </div>
 
       {!hasPulse && !weather && !prayer ? (
-        <p className="muted">{d.common.loading} — the pulse fills as sources arrive…</p>
+        <p className="muted">{d.common.loading}</p>
       ) : null}
       {hasPulse === false && (weather || prayer) ? <p className="muted">{d.pulse.empty}</p> : null}
       {merged.map((item) => (
         <article key={item.id} className="pulse-item">
           <div className="pulse-head">
-            <span className="pulse-source">{sourceLabel(d, item.source)}</span>
+            <span className="pulse-source">
+              {item.source === "local" ? d.pulse.localDevice : sourceLabel(d, item.source)}
+            </span>
+            {item.source === "local" ? <span className="pulse-badge">{d.pulse.notShared}</span> : null}
             {item.kind === "promoted" ? (
               <span className="pulse-source" style={{ background: "rgba(150,104,47,0.16)" }}>
-                ★ {item.sponsor?.name ?? "Sponsored"}
+                ★ {item.sponsor?.name ?? d.pulse.sources.promotions}
               </span>
             ) : null}
-            <span>{timeAgo(item.at)}</span>
+            <span>{timeAgo(d, item.at)}</span>
           </div>
           {item.url ? (
             <a href={item.url} target="_blank" rel="noreferrer">

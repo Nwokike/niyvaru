@@ -63,7 +63,7 @@ export function PlaceCard({
             >
               <img
                 src={photo.thumbUrl}
-                alt={`${name} — ${photo.attribution}`}
+                alt=""
                 loading="lazy"
                 onError={(e) => e.currentTarget.parentElement?.style.setProperty("display", "none")}
               />

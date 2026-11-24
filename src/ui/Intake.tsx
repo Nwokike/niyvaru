@@ -126,19 +126,24 @@ export function Intake({
   const [wheelchair, setWheelchair] = useState(false);
   const [interests, setInterests] = useState<string[]>([]);
   const [name, setName] = useState("");
-  const [showWarning, setShowWarning] = useState(false);
+  const [showWarning, setShowWarning] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   onCloseRef.current = onClose;
+
+  const selectedArea = areas.find((a) => a.id === stay) ?? searchResults?.find((a) => a.id === stay) ?? area;
 
   useEffect(() => {
     if (homepage) return;
     const root = modalRef.current;
     if (!root) return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const focusable = (): HTMLElement[] =>
@@ -166,12 +171,18 @@ export function Intake({
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
+      previouslyFocusedRef.current?.focus();
     };
   }, [homepage, area]);
 
   const finish = async (): Promise<void> => {
+    if (submitting) return;
     const language = locale === "ar" ? "Arabic" : "English";
-    let current = areas.find((a) => a.id === stay) ?? area ?? searchResults?.[0] ?? null;
+    if (checkin && checkout && checkout < checkin) {
+      setShowWarning(d.intake.dateOrder);
+      return;
+    }
+    let current = selectedArea ?? searchResults?.[0] ?? null;
     if (!current && search.trim().length >= 2) {
       try {
         current = (await searchAreas(search.trim()))[0] ?? null;
@@ -180,9 +191,11 @@ export function Intake({
       }
     }
     if (!current) {
-      setShowWarning(true);
+      setShowWarning(d.intake.areaRequired);
       return;
     }
+    setSubmitting(true);
+    setShowWarning("");
     try {
       await writeFile(
         "/memories/traveller.md",
@@ -202,16 +215,26 @@ export function Intake({
       onClose(current);
     } catch {
       setSaveError(d.intake.saveError);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const runSearch = async (): Promise<void> => {
     const q = search.trim();
-    if (q.length < 2 || searching) return;
+    if (q.length < 2) {
+      setSearchResults(null);
+      return;
+    }
+    if (searching) return;
     setSearching(true);
     try {
       const found = await searchAreas(q);
       setSearchResults(found);
+      if (found[0]) {
+        setStay(found[0].id);
+        onPickArea(found[0]);
+      }
     } catch {
       setSearchResults(null);
     } finally {
@@ -248,11 +271,34 @@ export function Intake({
             className="field"
             value={search}
             placeholder={d.welcome.searchPlaceholder}
-            onChange={(e) => setSearch(e.target.value)}
+            aria-label={d.welcome.searchPlaceholder}
+            aria-controls="area-search-results"
+            aria-expanded={!!searchResults?.length}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setSearchResults(null);
+            }}
             onKeyDown={(e) => e.key === "Enter" && void runSearch()}
           />
-          {searching ? <span className="spinner" /> : null}
+          <button type="button" className="btn btn-ghost search-btn" onClick={() => void runSearch()} disabled={searching || search.trim().length < 2}>
+            {searching ? <span className="spinner" /> : d.welcome.searchAction}
+          </button>
         </div>
+        <p className="muted search-hint" aria-live="polite">
+          {searching
+            ? d.welcome.searching
+            : searchResults
+              ? searchResults.length
+                ? d.welcome.resultCount.replace("{n}", String(searchResults.length))
+                : d.welcome.noResults
+              : d.welcome.searchHint}
+        </p>
+        {selectedArea && searchResults?.length ? (
+          <p className="selected-area" role="status">
+            {d.intake.selectedArea.replace("{area}", selectedArea.name)}
+          </p>
+        ) : null}
+        <div id="area-search-results" aria-label={d.a11y.searchResults}>
         {searchResults?.length ? (
           <div className="request-chips">
             {searchResults.map((r) => (
@@ -261,6 +307,7 @@ export function Intake({
                 type="button"
                 className="chip"
                 data-selected={r.id === stay}
+                aria-pressed={r.id === stay}
                 onClick={() => {
                   setStay(r.id);
                   onPickArea(r);
@@ -271,9 +318,8 @@ export function Intake({
               </button>
             ))}
           </div>
-        ) : searchResults && !searching ? (
-          <p className="muted request-search-empty">{d.welcome.noResults}</p>
         ) : null}
+        </div>
         <div className="request-chips">
           {(areas.length ? areas : area ? [area] : []).map((a) => (
             <button
@@ -281,6 +327,7 @@ export function Intake({
               type="button"
               className="chip"
               data-selected={a.id === stay}
+              aria-pressed={a.id === stay}
               onClick={() => {
                 setStay(a.id);
                 onPickArea(a);
@@ -294,12 +341,12 @@ export function Intake({
 
       <div className="request-dates">
         <label className="request-field">
-          <span>{d.intake.checkin}</span>
-          <input className="field" type="date" value={checkin} onChange={(e) => setCheckin(e.target.value)} />
+          <span>{d.intake.checkin} <small className="muted">({d.intake.optional})</small></span>
+          <input className="field" type="date" value={checkin} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setCheckin(e.target.value)} />
         </label>
         <label className="request-field">
-          <span>{d.intake.checkout}</span>
-          <input className="field" type="date" value={checkout} onChange={(e) => setCheckout(e.target.value)} />
+          <span>{d.intake.checkout} <small className="muted">({d.intake.optional})</small></span>
+          <input className="field" type="date" value={checkout} min={checkin || new Date().toISOString().slice(0, 10)} onChange={(e) => setCheckout(e.target.value)} />
         </label>
       </div>
 
@@ -330,7 +377,7 @@ export function Intake({
         <legend>{d.intake.standard}</legend>
         <div className="request-chips">
           {(Object.entries(d.intake.standardOptions) as [Standard, string][]).map(([key, label]) => (
-            <button key={key} type="button" className="chip" data-selected={standard === key} onClick={() => setStandard(key)}>
+            <button key={key} type="button" className="chip" data-selected={standard === key} aria-pressed={standard === key} onClick={() => setStandard(key)}>
               {label}
             </button>
           ))}
@@ -341,7 +388,7 @@ export function Intake({
         <legend>{d.intake.proximity}</legend>
         <div className="request-cards">
           {(Object.entries(d.intake.proximityOptions) as [Proximity, { label: string; hint: string }][]).map(([key, opt]) => (
-            <button key={key} type="button" className="toggle-card" data-selected={proximity === key} onClick={() => setProximity(key)}>
+            <button key={key} type="button" className="toggle-card" data-selected={proximity === key} aria-pressed={proximity === key} onClick={() => setProximity(key)}>
               <div>
                 <div>{opt.label}</div>
                 <div className="muted">{opt.hint}</div>
@@ -355,7 +402,7 @@ export function Intake({
         <legend>{d.intake.breakfast}</legend>
         <div className="request-chips">
           {(Object.entries(d.intake.breakfastOptions) as [Breakfast, string][]).map(([key, label]) => (
-            <button key={key} type="button" className="chip" data-selected={breakfast === key} onClick={() => setBreakfast(key)}>
+            <button key={key} type="button" className="chip" data-selected={breakfast === key} aria-pressed={breakfast === key} onClick={() => setBreakfast(key)}>
               {label}
             </button>
           ))}
@@ -392,6 +439,7 @@ export function Intake({
               type="button"
               className="chip"
               data-selected={interests.includes(label)}
+              aria-pressed={interests.includes(label)}
               onClick={() => setInterests((list) => (list.includes(label) ? list.filter((x) => x !== label) : [...list, label]))}
             >
               {label}
@@ -405,11 +453,12 @@ export function Intake({
         <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
 
-      {showWarning ? <p className="request-warning">{d.intake.areaRequired}</p> : null}
+      {showWarning ? <p className="request-warning" role="alert">{showWarning}</p> : null}
       {saveError ? <p className="request-warning" role="alert">{saveError}</p> : null}
 
-      <button type="button" className="btn btn-bronze request-cta" onClick={submit}>
-        {d.intake.cta}
+      <button type="button" className="btn btn-bronze request-cta" onClick={submit} disabled={submitting}>
+        {submitting ? <span className="spinner" /> : null}
+        {submitting ? d.intake.submitting : d.intake.cta}
       </button>
       <p className="muted request-privacy">{d.intake.privacy}</p>
     </div>
@@ -431,6 +480,7 @@ export function Intake({
               <span className="home-title-highlight">{d.intake.heroTitleHighlight}</span>
             </h1>
             <p className="home-lede">{d.intake.heroLede}</p>
+            <p className="home-trust">{d.intake.heroTrust}</p>
             <ul className="home-perks">
               <li className="home-perk">
                 <span className="home-perk-icon">

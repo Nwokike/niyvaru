@@ -15,14 +15,14 @@ export function BriefPanel({ d, pack }: { d: Dictionary; pack: AreaPack }) {
   return (
     <>
       {hero ? (
-        <img className="brief-hero arch" src={hero.thumbUrl} alt={hero.attribution} loading="lazy" />
+        <img className="brief-hero arch" src={hero.thumbUrl} alt={`${pack.name} ${d.common.photos}`} loading="lazy" />
       ) : null}
       {hero ? <p className="muted">{hero.attribution}{hero.license ? ` · ${hero.license}` : ""}</p> : null}
 
       <div className="brief-facts">
         {counts.map(([kind, n]) => (
-          <span key={kind} className="chip" style={{ cursor: "default" }}>
-            {n} {kind}
+          <span key={kind} className="fact-pill">
+            {n} {d.explore.layers[kind as keyof typeof d.explore.layers] ?? kind}
           </span>
         ))}
       </div>
@@ -33,7 +33,7 @@ export function BriefPanel({ d, pack }: { d: Dictionary; pack: AreaPack }) {
           <p className="brief-prose">{storyPlace.story.extract}</p>
           {storyPlace.story.pageUrl ? (
             <a className="muted" href={storyPlace.story.pageUrl} target="_blank" rel="noreferrer" style={{ color: "var(--bronze-deep)" }}>
-              {d.brief.from.replace("{source}", "Wikipedia")}
+              {d.brief.from.replace("{source}", d.discover.source)}
             </a>
           ) : null}
         </div>

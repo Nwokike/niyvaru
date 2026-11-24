@@ -16,6 +16,7 @@ export function ChatPanel({
   suggestions,
   chatLabel,
   prefill,
+  prefillNonce,
   onTurnComplete,
 }: {
   d: Dictionary;
@@ -24,6 +25,7 @@ export function ChatPanel({
   suggestions: string[];
   chatLabel: string;
   prefill?: string;
+  prefillNonce?: number;
   onTurnComplete: (userText: string, assistantText: string) => void;
 }) {
   const transport = useMemo(
@@ -52,12 +54,18 @@ export function ChatPanel({
   });
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [messages, status]);
 
   useEffect(() => {
     if (!prefill) return;
     setInput(prefill);
     inputRef.current?.focus();
-  }, [prefill]);
+  }, [prefill, prefillNonce]);
 
   const busy = status === "submitted" || status === "streaming";
   const send = (): void => {
@@ -69,7 +77,7 @@ export function ChatPanel({
 
   return (
     <div className="chat" aria-label={chatLabel}>
-      <div className="chat-log">
+      <div className="chat-log" ref={logRef} role="log" aria-live="polite" aria-label={chatLabel}>
         {messages.length === 0 ? (
           <div className="hint">
             <p className="muted" style={{ margin: 0 }}>{greeting}</p>

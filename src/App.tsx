@@ -94,6 +94,8 @@ export function App() {
   const [areas, setAreas] = useState<AreaMeta[]>([]);
   const [discoverIndex, setDiscoverIndex] = useState(0);
   const [chatPrefill, setChatPrefill] = useState("");
+  const [chatPrefillNonce, setChatPrefillNonce] = useState(0);
+  const [layersOpen, setLayersOpen] = useState(false);
   const todRef = useRef(tod);
   todRef.current = tod;
 
@@ -212,8 +214,9 @@ export function App() {
   }, [meta]);
 
   // ——— map lifecycle: loads under the loader, destroyed on area change ———
+  const mapAllowed = view !== "form";
   useEffect(() => {
-    if (!meta || !mapEl.current) return;
+    if (!meta || !mapEl.current || !mapAllowed) return;
     let disposed = false;
     const mapController = new AbortController();
     const apiPromise = import("./map/mapView")
@@ -238,7 +241,7 @@ export function App() {
         return api;
       })
       .catch((e) => {
-        if (!disposed) setNotice(`map failed: ${String((e as Error).message ?? e)}`);
+        if (!disposed) setNotice(d.explore.errors.mapFailed.replace("{error}", String((e as Error).message ?? e)));
         return null;
       });
     return () => {
@@ -247,7 +250,7 @@ export function App() {
       void apiPromise.then((api) => api?.destroy());
       mapRef.current = null;
     };
-  }, [meta]);
+  }, [meta, mapAllowed]);
 
   useEffect(() => {
     if (mapRef.current && pack) mapRef.current.setPlaces(pack);
@@ -334,9 +337,16 @@ export function App() {
         labels: {
           eyebrow: d.walk.eyebrow,
           stop: d.walk.stop,
+          exit: d.walk.exit,
           pause: d.walk.pause,
           resume: d.walk.resume,
+          follow: d.walk.follow,
+          following: d.walk.following,
+          fromCentre: d.walk.fromCentre,
+          album: d.walk.album,
           eta: (n: number) => d.walk.eta.replace("{n}", String(n)),
+          distance: (walked: number, total: number) =>
+            d.walk.distance.replace("{walked}", String(walked)).replace("{total}", String(total)),
           streetFrame: (n: number) => d.walk.streetFrame.replace("{n}", String(n)),
           of: d.walk.of,
           realFrames: (n: number) => d.walk.realFrames.replace("{n}", String(n)),
@@ -346,7 +356,7 @@ export function App() {
       });
     } catch {
       setWalking(false);
-      setNotice("walk imagery unavailable right now");
+      setNotice(d.explore.errors.walkUnavailable);
     }
   }, [d]);
 
@@ -356,7 +366,7 @@ export function App() {
       if (!m) return;
       setWalking(true);
       try {
-        const route = await walkingRoute(`Walk to ${target.nameEn ?? target.name}`, [
+        const route = await walkingRoute(d.walk.routeTo.replace("{name}", target.nameEn ?? target.name), [
           [m.lat, m.lon],
           [target.lat, target.lon],
         ]);
@@ -364,10 +374,10 @@ export function App() {
         await beginWalk(route);
       } catch {
         setWalking(false);
-        setNotice("no walking route found for that destination");
+        setNotice(d.explore.errors.noRoute);
       }
     },
-    [meta, pack, beginWalk]
+    [meta, pack, beginWalk, d]
   );
 
   // ——— derived ———
@@ -392,11 +402,29 @@ export function App() {
   const lookupPlace = (id: string): Place | undefined => pack?.places.find((p) => p.id === id);
 
   return (
-    <div className="app" data-view={view}>
+    <div className="app" data-view={view} data-walking={walking ? "true" : "false"}>
       <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
-      {/* The form IS the homepage — map behind, dimmed until assembled */}
-      {view === "form" && meta ? null : null}
+      {view === "explore" && discoverPlaces.length ? (
+        <ul className="sr-only" aria-label={d.a11y.placeList}>
+          <li>{d.explore.keyboardHelp}</li>
+          {discoverPlaces.slice(0, 60).map((p, idx) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  setDiscoverIndex(idx);
+                  setPlace(p);
+                  mapRef.current?.focusPlace(p, () => setPlace(p));
+                }}
+              >
+                {p.nameEn ?? p.name} · {p.kind}
+                {p.distanceM != null ? ` · ${d.common.kmAway.replace("{d}", String(p.distanceM))}` : ""}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {view === "assembling" && meta ? (
         <Assembling
@@ -438,7 +466,7 @@ export function App() {
               </button>
             ) : null}
             <div className="topbar-actions">
-              <div className="tod" role="group" aria-label={d.explore.timeOfDay.day}>
+              <div className="tod" role="group" aria-label={d.explore.timeOfDayLabel} title={d.explore.timeOfDayLocal}>
                 <div className="tod-readout">
                   <span className="tod-clock">{todClock(tod)}</span>
                   <span className="tod-phase">· {todLabel(d, nearestStop(tod))}</span>
@@ -451,7 +479,8 @@ export function App() {
                   step={0.1}
                   value={tod}
                   onChange={(e) => applyTod(Number(e.target.value))}
-                  aria-label={d.explore.timeOfDay.day}
+                  aria-label={d.explore.timeOfDayLabel}
+                  aria-valuetext={d.a11y.timeOfDay.replace("{clock}", todClock(tod)).replace("{phase}", todLabel(d, nearestStop(tod)))}
                 />
                 <div className="tod-stops">
                   {TOD_STOPS.map((stop) => (
@@ -478,21 +507,24 @@ export function App() {
               <button className="chip" onClick={() => setTab("memory")} aria-label={d.memory.title}>
                 🧠
               </button>
-              <button className="chip" onClick={() => { setView("form"); setMeta(null); setPack(null); }} aria-label="change area">
+              <button className="chip" onClick={() => { setView("form"); setMeta(null); setPack(null); }} aria-label={d.explore.changeArea} title={d.explore.changeArea}>
                 ⟲
               </button>
             </div>
           </header>
 
           {notice ? (
-            <div className="notice" onClick={() => setNotice("")}>
-              {notice}
+            <div className="notice" role="alert">
+              <span>{notice}</span>
+              <button type="button" className="notice-dismiss" onClick={() => setNotice("")} aria-label={d.common.dismiss}>
+                ✕
+              </button>
             </div>
           ) : null}
 
           <aside className="panel">
             <nav className="panel-tabs">
-              {(["explore", "pulse", "brief"] as Tab[]).map((key) => (
+              {(["explore", "pulse", "brief", "memory"] as Tab[]).map((key) => (
                 <button key={key} data-active={tab === key} onClick={() => setTab(key)}>
                   {d.tabs[key]}
                 </button>
@@ -513,6 +545,7 @@ export function App() {
                       onAsk={(p) => {
                         setTab("explore");
                         setChatPrefill(d.discover.askAbout.replace("{name}", p.nameEn ?? p.name));
+                        setChatPrefillNonce((n) => n + 1);
                       }}
                       onClose={() => {
                         setPlace(null);
@@ -546,17 +579,31 @@ export function App() {
                   ) : pack ? (
                     <p className="muted">{d.discover.noPlaces}</p>
                   ) : null}
-                  <div className="chat-suggestions">
-                    <button className="chip" data-selected={activeKindGroup === null} onClick={() => setKindGroup(null)}>
-                      {d.explore.layers.all}
+                  <div className="layers-row">
+                    <button
+                      type="button"
+                      className="layers-toggle"
+                      aria-expanded={layersOpen}
+                      onClick={() => setLayersOpen((v) => !v)}
+                    >
+                      {d.explore.layersToggle}
+                      {activeKindGroup ? ` · ${(d.explore.layers as Record<string, string>)[activeKindGroup] ?? activeKindGroup}` : ""}
+                      <span aria-hidden="true">{layersOpen ? "−" : "+"}</span>
                     </button>
-                    {["hotels", "pharmacy", "food", "worship", "shops", "health", "money", "heritage", "green"].map((group) =>
-                      KIND_GROUPS[group] ? (
-                        <button key={group} className="chip" data-selected={activeKindGroup === group} onClick={() => setKindGroup(group)}>
-                          {(d.explore.layers as Record<string, string>)[group] ?? group}
+                    {layersOpen ? (
+                      <div className="chat-suggestions">
+                        <button className="chip" data-selected={activeKindGroup === null} aria-pressed={activeKindGroup === null} onClick={() => setKindGroup(null)}>
+                          {d.explore.layers.all}
                         </button>
-                      ) : null
-                    )}
+                        {["hotels", "pharmacy", "food", "worship", "shops", "health", "money", "heritage", "green"].map((group) =>
+                          KIND_GROUPS[group] ? (
+                            <button key={group} className="chip" data-selected={activeKindGroup === group} aria-pressed={activeKindGroup === group} onClick={() => setKindGroup(group)}>
+                              {(d.explore.layers as Record<string, string>)[group] ?? group}
+                            </button>
+                          ) : null
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                   {agent ? (
                     <Suspense fallback={<p className="muted">{d.common.loading}</p>}>
@@ -567,6 +614,7 @@ export function App() {
                         suggestions={[...d.explore.suggestions]}
                         chatLabel={d.a11y.chatLabel}
                         prefill={chatPrefill}
+                        prefillNonce={chatPrefillNonce}
                         onTurnComplete={onTurnComplete}
                       />
                     </Suspense>

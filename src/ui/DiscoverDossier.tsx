@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { openingHoursAt } from "../sources/openingHours";
 import { safeWebsiteHost, safeWebsiteUrl } from "../sources/text";
 import type { Dictionary } from "../config/i18n";
@@ -9,7 +9,6 @@ import type { Place } from "../sources/types";
  * smooth 3D camera flights, matching the Lisbon City in Relief experience.
  * Supports next/prev buttons, touch/swipe, and arrow keys.
  */
-
 export function DiscoverDossier({
   d,
   places,
@@ -34,6 +33,8 @@ export function DiscoverDossier({
   const total = places.length;
   const place = places[currentIndex];
   const rtl = d.dir === "rtl";
+  const [expanded, setExpanded] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   const goPrev = (): void => {
     onSelectIndex(currentIndex > 0 ? currentIndex - 1 : total - 1);
@@ -44,9 +45,22 @@ export function DiscoverDossier({
   };
 
   useEffect(() => {
+    setExpanded(false);
+    setPhotoFailed(false);
+  }, [currentIndex]);
+
+  useEffect(() => {
     if (!keyboardEnabled) return;
     const handleKey = (e: KeyboardEvent): void => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          target instanceof HTMLButtonElement ||
+          target.isContentEditable)
+      ) return;
       if (e.key === "ArrowRight") {
         if (rtl) goPrev();
         else goNext();
@@ -71,34 +85,41 @@ export function DiscoverDossier({
   const websiteHost = safeWebsiteHost(place.tags.website);
   const credit = (photo: (typeof photos)[number]): string =>
     `${photo.attribution}${photo.license ? ` · ${photo.license}` : ""}`;
+  const prevPlace = places[currentIndex > 0 ? currentIndex - 1 : total - 1];
+  const nextPlace = places[currentIndex < total - 1 ? currentIndex + 1 : 0];
 
   let touchStartX = 0;
+  let touchStartY = 0;
 
   return (
     <div
       className="discover-dossier rise"
-      onTouchStart={(e) => { touchStartX = e.changedTouches[0]?.clientX ?? 0; }}
+      onTouchStart={(e) => {
+        touchStartX = e.changedTouches[0]?.clientX ?? 0;
+        touchStartY = e.changedTouches[0]?.clientY ?? 0;
+      }}
       onTouchEnd={(e) => {
-        const delta = (e.changedTouches[0]?.clientX ?? touchStartX) - touchStartX;
-        if (Math.abs(delta) < 48) return;
-        const forward = rtl ? delta > 0 : delta < 0;
+        const dx = (e.changedTouches[0]?.clientX ?? touchStartX) - touchStartX;
+        const dy = (e.changedTouches[0]?.clientY ?? touchStartY) - touchStartY;
+        if (Math.abs(dx) < 48 || Math.abs(dx) <= Math.abs(dy)) return;
+        const forward = rtl ? dx > 0 : dx < 0;
         if (forward) goNext();
         else goPrev();
       }}
     >
       <div className="dossier-nav">
-        <div className="dossier-index" aria-live="polite">
+        <div className="dossier-index" role="status">
           <span className="dossier-count">
             {String(currentIndex + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}
           </span>
-          <span className="dossier-kind-tag">{place.kind}</span>
+          <span className="dossier-kind-tag">{d.explore.layers[place.kind as keyof typeof d.explore.layers] ?? place.kind}</span>
         </div>
         <div className="dossier-stepper">
           <button
             type="button"
             className="stepper-arrow"
             onClick={goPrev}
-            aria-label={d.discover.previous}
+            aria-label={prevPlace ? d.discover.previousPlace.replace("{name}", prevPlace.nameEn ?? prevPlace.name) : d.discover.previous}
             title={d.discover.previousHint}
           >
             {rtl ? "→" : "←"}
@@ -107,32 +128,28 @@ export function DiscoverDossier({
             type="button"
             className="stepper-arrow"
             onClick={goNext}
-            aria-label={d.discover.next}
+            aria-label={nextPlace ? d.discover.nextPlace.replace("{name}", nextPlace.nameEn ?? nextPlace.name) : d.discover.next}
             title={d.discover.nextHint}
           >
             {rtl ? "←" : "→"}
           </button>
-          <button
-            type="button"
-            className="dossier-close"
-            onClick={onClose}
-            aria-label={d.common.close}
-          >
+          <button type="button" className="dossier-close" onClick={onClose} aria-label={d.common.close}>
             ✕
           </button>
         </div>
       </div>
+      <p className="muted dossier-nav-hint">{d.discover.navHint}</p>
 
-      {mainPhoto ? (
+      {mainPhoto && !photoFailed ? (
         <>
           <div className="dossier-photo-wrap arch">
             <img
               src={mainPhoto.thumbUrl}
-              alt={`${name} — ${mainPhoto.attribution}`}
+              alt=""
               title={credit(mainPhoto)}
               className="dossier-photo"
               loading="lazy"
-              onError={(e) => e.currentTarget.parentElement?.style.setProperty("display", "none")}
+              onError={() => setPhotoFailed(true)}
             />
             <div className="dossier-photo-attr">{credit(mainPhoto)}</div>
           </div>
@@ -142,9 +159,9 @@ export function DiscoverDossier({
                 <figure className="dossier-photo-thumb" key={i} title={credit(photo)}>
                   <img
                     src={photo.thumbUrl}
-                    alt={`${name} — ${photo.attribution}`}
+                    alt=""
                     loading="lazy"
-                    onError={(e) => e.currentTarget.parentElement?.style.setProperty("display", "none")}
+                    onError={(e) => (e.currentTarget.parentElement?.style.setProperty("display", "none"))}
                   />
                   <figcaption className="dossier-photo-thumb-attr">{credit(photo)}</figcaption>
                 </figure>
@@ -152,9 +169,14 @@ export function DiscoverDossier({
             </div>
           ) : null}
         </>
-      ) : null}
+      ) : (
+        <div className="dossier-photo-empty">
+          <span aria-hidden="true">◎</span>
+          <span>{d.discover.noPhoto}</span>
+        </div>
+      )}
 
-      <div className="dossier-head">
+      <div className="dossier-head" role="status">
         <h3 className="dossier-title">{name}</h3>
         {place.nameEn && place.nameEn !== place.name ? (
           <div className="dossier-subname">{place.name}</div>
@@ -177,25 +199,25 @@ export function DiscoverDossier({
 
       {place.story ? (
         <div className="dossier-story">
-          <p className="dossier-extract">{place.story.extract}</p>
-          {place.story.pageUrl ? (
-            <a
-              href={place.story.pageUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="dossier-source-link"
-            >
-              {d.brief.from.replace("{source}", d.discover.source)} ↗
-            </a>
-          ) : null}
+          <p className={`dossier-extract${expanded ? " expanded" : ""}`}>{place.story.extract}</p>
+          <div className="dossier-story-actions">
+            <button type="button" className="link-btn" onClick={() => setExpanded((v) => !v)}>
+              {expanded ? d.discover.readLess : d.discover.readMore}
+            </button>
+            {place.story.pageUrl ? (
+              <a href={place.story.pageUrl} target="_blank" rel="noreferrer" className="dossier-source-link">
+                {d.brief.from.replace("{source}", d.discover.source)} ↗
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
       {place.tags.phone || place.tags.website || place.tags.addrStreet ? (
         <div className="place-meta dossier-contact">
-          {place.tags.phone ? <span>☎ {place.tags.phone}</span> : null}
+          {place.tags.phone ? <span dir="ltr">☎ {place.tags.phone}</span> : null}
           {website && websiteHost ? (
-            <a href={website} target="_blank" rel="noreferrer" className="dossier-link">
+            <a href={website} target="_blank" rel="noreferrer" className="dossier-link" dir="ltr">
               {websiteHost} ↗
             </a>
           ) : null}
@@ -205,13 +227,10 @@ export function DiscoverDossier({
         </div>
       ) : null}
 
+      <p className="muted dossier-coverage">{d.discover.coverage}</p>
+
       <div className="dossier-actions">
-        <button
-          type="button"
-          className="btn btn-bronze dossier-walk-btn"
-          onClick={() => onWalk(place)}
-          disabled={walking}
-        >
+        <button type="button" className="btn btn-bronze dossier-walk-btn" onClick={() => onWalk(place)} disabled={walking}>
           {walking ? <span className="spinner" /> : `🚶 ${d.explore.walk}`}
         </button>
         <button type="button" className="btn btn-ghost dossier-ask-btn" onClick={() => onAsk(place)}>

@@ -45,10 +45,16 @@ export function Assembling({
 
   const settled = ORDER.filter((k) => stages[k].state === "done" || stages[k].state === "failed").length;
   const progress = settled / ORDER.length;
-  const anythingReady = settled > 0;
+  const placesReady = stages.places.state === "done" || stages.places.state === "failed";
+  const failed = ORDER.filter((k) => stages[k].state === "failed");
+
+  const localDetail = (key: StageKey, detail?: string): string => {
+    const count = Number(detail?.match(/\d[\d,]*/)?.[0].replace(/,/g, "") ?? 0);
+    return d.assembling.detail[key].replace("{n}", String(count));
+  };
 
   return (
-    <div className={`assembling grain${revealing ? " exit" : ""}`} aria-live="polite">
+    <div className={`assembling grain${revealing ? " exit" : ""}`}>
       <div className="assembling-card rise">
         <div className="loader-ring" aria-hidden="true">
           <div className="loader-comet" />
@@ -57,7 +63,7 @@ export function Assembling({
             <img
               className="loader-hero arch"
               src={hero.thumbUrl}
-              alt={hero.attribution}
+              alt={`${areaName} ${d.common.photos}`}
               onError={(e) => (e.currentTarget.style.display = "none")}
             />
           ) : null}
@@ -66,19 +72,21 @@ export function Assembling({
         <h2 className="display" style={{ fontSize: "1.7rem", margin: "0.4rem 0 0.9rem" }}>
           {d.assembling.title.replace("{area}", areaName)}
         </h2>
-        <div className="assembling-steps">
+        <p className="muted assembling-saved">{d.assembling.saved.replace("{area}", areaName)}</p>
+        <div className="assembling-steps" aria-live="polite">
           {ORDER.map((key) => (
             <div key={key} className="assembling-step" data-state={stages[key].state}>
               <span className="assembling-name">{d.assembling.steps[key]}</span>
               <span className="assembling-status">
-                {stages[key].detail ??
-                  (stages[key].state === "done"
+                {stages[key].detail
+                  ? localDetail(key, stages[key].detail)
+                  : stages[key].state === "done"
                     ? d.assembling.ready
                     : stages[key].state === "failed"
                       ? d.assembling.failed
                       : stages[key].state === "active"
                         ? "…"
-                        : "")}
+                        : ""}
               </span>
             </div>
           ))}
@@ -86,8 +94,9 @@ export function Assembling({
         <div className="loader-progress" aria-hidden="true">
           <i style={{ width: `${Math.round(progress * 100)}%` }} />
         </div>
-        <p className="muted" style={{ margin: "0.5rem 0 1rem" }}>{elapsed}s</p>
-        <button className="btn btn-bronze" onClick={onEnter} disabled={!anythingReady}>
+        <p className="muted" style={{ margin: "0.5rem 0 1rem" }} aria-hidden="true">{elapsed}s</p>
+        {failed.length ? <p className="muted assembling-partial" role="status">{d.assembling.partial.replace("{n}", String(failed.length))}</p> : null}
+        <button className="btn btn-bronze" onClick={onEnter} disabled={!placesReady}>
           {d.assembling.enter}
         </button>
       </div>

@@ -2,9 +2,9 @@
  * Walk player — the signature experience.
  * Real street photographs anchored along the real route, crossfaded on the
  * GPU with a preload window; a smooth 3D camera glide along the same route
- * when imagery is sparse; a compact photo strip for reduced motion. The map
- * stays visible in every mode. Distance and progress always come from the
- * route, never invented.
+ * when imagery is sparse; a complete static photo album for reduced motion.
+ * The map stays visible in every mode. Distance and progress always come from
+ * the route, never invented.
  */
 import type { MapApi } from "../map/mapView";
 import type { AnchoredFrame } from "./matcher";
@@ -17,9 +17,15 @@ export interface WalkHandle {
 export interface WalkLabels {
   eyebrow: string;
   stop: string;
+  exit: string;
   pause: string;
   resume: string;
+  follow: string;
+  following: string;
+  fromCentre: string;
+  album: string;
   eta: (minutes: number) => string;
+  distance: (walked: number, total: number) => string;
   of: string;
   streetFrame: (heading: number) => string;
   realFrames: (n: number) => string;
@@ -53,13 +59,15 @@ interface WalkUi {
   barEl: HTMLElement;
   noteEl: HTMLElement;
   pauseBtn: HTMLButtonElement;
+  followBtn: HTMLButtonElement;
+  stopBtn: HTMLButtonElement;
   strip?: HTMLDivElement;
 }
 
 function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, reducedMotion: boolean): WalkUi {
   const root = document.createElement("div");
   root.className = "walk-overlay";
-  root.setAttribute("role", "dialog");
+  root.setAttribute("role", "region");
   root.setAttribute("aria-label", route.name);
 
   const media = document.createElement("div");
@@ -84,29 +92,38 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
   const hud = document.createElement("div");
   hud.className = "walk-hud";
   hud.innerHTML = `
-    <div class="eyebrow">${escapeHtml(labels.eyebrow)}</div>
+    <div class="walk-eyebrow">${escapeHtml(labels.eyebrow)}</div>
     <div class="walk-title">${escapeHtml(route.name)}</div>
     <div class="walk-meta">
       <span class="walk-dist"></span>
       <span class="walk-eta"></span>
     </div>
     <div class="walk-bar"><i></i></div>
-    <div class="walk-note">${frameCount >= 2 ? escapeHtml(labels.realFrames(frameCount)) : escapeHtml(labels.routeOnly)}</div>`;
+    <div class="walk-note">${frameCount >= 2 ? escapeHtml(labels.realFrames(frameCount)) : escapeHtml(labels.routeOnly)}</div>
+    <div class="walk-origin">${escapeHtml(labels.fromCentre)}</div>`;
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "walk-pause";
   pauseBtn.type = "button";
   pauseBtn.textContent = labels.pause;
 
+  const followBtn = document.createElement("button");
+  followBtn.className = "walk-follow";
+  followBtn.type = "button";
+  followBtn.textContent = labels.following;
+
   const stopBtn = document.createElement("button");
   stopBtn.className = "walk-stop";
   stopBtn.type = "button";
-  stopBtn.textContent = labels.stop;
+  stopBtn.textContent = reducedMotion ? labels.exit : labels.stop;
 
-  root.append(media, pauseBtn, stopBtn, hud);
+  root.append(media, pauseBtn, followBtn, stopBtn, hud);
   document.body.appendChild(root);
 
-  if (strip) pauseBtn.style.display = "none";
+  if (strip) {
+    pauseBtn.style.display = "none";
+    followBtn.style.display = "none";
+  }
 
   return {
     root,
@@ -117,6 +134,8 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
     barEl: hud.querySelector(".walk-bar i") as HTMLElement,
     noteEl: hud.querySelector(".walk-note") as HTMLElement,
     pauseBtn,
+    followBtn,
+    stopBtn,
     strip,
   };
 }
@@ -160,6 +179,16 @@ function preload(src: string): void {
   img.src = src;
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLSelectElement ||
+    el.isContentEditable
+  );
+}
+
 export function startWalk(options: WalkOptions): WalkHandle {
   const { map, route, frames, reducedMotion, labels, onEnd } = options;
   const demoSeconds = Math.min(DEMO_SECONDS_MAX, Math.max(DEMO_SECONDS_MIN, route.distanceM / 60));
@@ -169,9 +198,11 @@ export function startWalk(options: WalkOptions): WalkHandle {
   const narrow = window.innerWidth < 720;
   const walkZoom = narrow ? 15.8 : 17.2;
   const walkPitch = narrow ? 52 : 60;
+  const previousFocus = document.activeElement as HTMLElement | null;
 
   let stopped = false;
   let paused = false;
+  let following = true;
   let pauseStarted = 0;
   let pausedTotal = 0;
   let elapsedBeforePause = 0;
@@ -182,73 +213,80 @@ export function startWalk(options: WalkOptions): WalkHandle {
   let lastFrameIdx = -1;
 
   const progress = (now: number): number => {
-    const elapsed = paused
-      ? elapsedBeforePause
-      : (now - startedAt - pausedTotal) / 1000;
+    const elapsed = paused ? elapsedBeforePause : (now - startedAt - pausedTotal) / 1000;
     return Math.min(1, elapsed / demoSeconds);
   };
 
   const updateHud = (t: number): void => {
     const walked = Math.round(route.distanceM * t);
     const minutes = Math.max(1, Math.ceil(((1 - t) * demoSeconds) / 60));
-    ui.distEl.textContent = `${walked} m ${labels.of} ${route.distanceM} m`;
+    ui.distEl.textContent = labels.distance(walked, route.distanceM);
     ui.etaEl.textContent = labels.eta(minutes);
     ui.barEl.style.width = `${Math.round(t * 100)}%`;
   };
 
   const glideCamera = (t: number): void => {
-    if (!coords.length) return;
+    if (!following || !coords.length) return;
     const sample = sampleRoute(coords, cum, t);
     map.map.jumpTo({ center: sample.center, zoom: walkZoom, pitch: walkPitch, bearing: sample.bearing });
   };
+
+  const setFollow = (next: boolean): void => {
+    following = next;
+    ui.followBtn.textContent = next ? labels.following : labels.follow;
+    ui.followBtn.setAttribute("aria-pressed", String(next));
+  };
+
+  const onDragStart = (): void => setFollow(false);
 
   const stop = (): void => {
     if (stopped) return;
     stopped = true;
     cancelAnimationFrame(raf);
     window.removeEventListener("keydown", onKey);
+    map.map.off("dragstart", onDragStart);
     ui.root.remove();
+    previousFocus?.focus();
     onEnd();
   };
 
-  let playbackStarted = false;
-
   const setPaused = (next: boolean): void => {
-    if (stopped || paused === next || !playbackStarted) return;
+    if (stopped || paused === next) return;
     if (next) {
       cancelAnimationFrame(raf);
       raf = 0;
       elapsedBeforePause = (performance.now() - startedAt - pausedTotal) / 1000;
       pauseStarted = performance.now();
-      pauseBtnText(labels.resume);
+      ui.pauseBtn.textContent = labels.resume;
+      ui.pauseBtn.setAttribute("aria-label", labels.resume);
     } else {
       pausedTotal += performance.now() - pauseStarted;
-      pauseBtnText(labels.pause);
+      ui.pauseBtn.textContent = labels.pause;
+      ui.pauseBtn.setAttribute("aria-label", labels.pause);
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(tick);
     }
     paused = next;
   };
 
-  function pauseBtnText(text: string): void {
-    ui.pauseBtn.textContent = text;
-    ui.pauseBtn.setAttribute("aria-label", text);
-  }
-
   function onKey(e: KeyboardEvent): void {
+    if (isTypingTarget(e.target)) return;
     if (e.key === "Escape") stop();
-    if (e.key === " " && playbackStarted) {
+    if (e.key === " ") {
       e.preventDefault();
       setPaused(!paused);
     }
   }
 
   ui.pauseBtn.addEventListener("click", () => setPaused(!paused));
-  (ui.root.querySelector(".walk-stop") as HTMLButtonElement).addEventListener("click", stop);
+  ui.followBtn.addEventListener("click", () => setFollow(!following));
+  ui.stopBtn.addEventListener("click", stop);
   window.addEventListener("keydown", onKey);
-  updateHud(0);
+  map.map.on("dragstart", onDragStart);
+  ui.followBtn.setAttribute("aria-pressed", "true");
+  ui.stopBtn.focus();
 
-  // Reduced motion: a compact, scrollable photo strip in route order.
+  // Reduced motion: a complete, static route photo album.
   if (ui.strip) {
     for (const frame of frames) {
       const img = document.createElement("img");
@@ -257,10 +295,14 @@ export function startWalk(options: WalkOptions): WalkHandle {
       img.loading = "lazy";
       ui.strip.appendChild(img);
     }
+    updateHud(1);
+    ui.etaEl.style.display = "none";
+    ui.barEl.parentElement?.style.setProperty("display", "none");
+    ui.noteEl.textContent = labels.album;
     return { stop };
   }
 
-  const tick = (): void => {
+  function tick(): void {
     if (stopped || paused) return;
     const t = progress(performance.now());
     glideCamera(t);
@@ -297,9 +339,8 @@ export function startWalk(options: WalkOptions): WalkHandle {
     updateHud(t);
     if (t >= 1) return stop();
     raf = requestAnimationFrame(tick);
-  };
+  }
 
-  playbackStarted = true;
   raf = requestAnimationFrame(tick);
   return { stop };
 }

@@ -5,14 +5,17 @@ import type { Dictionary } from "../config/i18n";
 
 /**
  * Memory/Ops — privacy made visible. The traveller sees exactly what the
- * agent remembers, can edit nothing-less-than-everything, export it, import
- * it, or erase it. Everything lives on this device.
+ * agent remembers, can edit it explicitly, export it, import it, or erase it.
+ * Everything lives on this device.
  */
 export function MemoryPanel({ d }: { d: Dictionary }) {
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const [installEvent, setInstallEvent] = useState<Event | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [editing, setEditing] = useState<Record<string, string>>({});
   const importRef = useRef<HTMLInputElement | null>(null);
+  const editRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const refresh = useCallback((): void => {
     void listFiles().then(setFiles);
@@ -42,17 +45,24 @@ export function MemoryPanel({ d }: { d: Dictionary }) {
   };
 
   const importAll = async (file: File): Promise<void> => {
-    const text = await file.text();
     try {
-      await importMemory(JSON.parse(text));
+      await importMemory(JSON.parse(await file.text()));
+      setFeedback(d.memory.importSuccess);
       refresh();
     } catch {
-      /* invalid dump — refuse silently, the traveller sees nothing change */
+      setFeedback(d.memory.importError);
     }
   };
 
-  const editFile = async (path: string, content: string): Promise<void> => {
-    await import("../memory/store").then((m) => m.writeFile(path, content));
+  const saveFile = async (path: string): Promise<void> => {
+    await import("../memory/store").then((m) => m.writeFile(path, editing[path] ?? ""));
+    setFeedback(d.memory.saved);
+    setEditing((current) => {
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
+    editRefs.current[path]?.focus();
     refresh();
   };
 
@@ -84,9 +94,10 @@ export function MemoryPanel({ d }: { d: Dictionary }) {
             e.target.value = "";
           }}
         />
-        <p className="muted" style={{ marginTop: "0.5rem" }}>
-          {persisted ? "🔒 persistent storage granted" : persisted === false ? "storage: best-effort" : ""}
+        <p className="muted" style={{ marginTop: "0.5rem" }} role="status">
+          {persisted ? d.memory.persistent : persisted === false ? d.memory.bestEffort : ""}
           {persisted === false && installEvent ? ` — ${d.memory.install}` : ""}
+          {feedback ? ` · ${feedback}` : ""}
         </p>
         {installEvent ? (
           <button
@@ -97,7 +108,7 @@ export function MemoryPanel({ d }: { d: Dictionary }) {
               setInstallEvent(null);
             }}
           >
-            Install app
+            {d.memory.install}
           </button>
         ) : null}
       </div>
@@ -113,10 +124,28 @@ export function MemoryPanel({ d }: { d: Dictionary }) {
           <pre
             contentEditable
             suppressContentEditableWarning
-            onBlur={(e) => void editFile(file.path, e.currentTarget.textContent ?? file.content)}
+            aria-label={`${d.memory.edit} ${file.path}`}
+            onInput={(e) => setEditing((current) => ({ ...current, [file.path]: e.currentTarget.textContent ?? "" }))}
           >
             {file.content}
           </pre>
+          <div className="memory-file-actions">
+            <button
+              ref={(el) => { editRefs.current[file.path] = el; }}
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                const isEditing = editing[file.path] !== undefined;
+                if (isEditing) void saveFile(file.path);
+                else {
+                  setEditing((current) => ({ ...current, [file.path]: file.content }));
+                  setFeedback("");
+                }
+              }}
+            >
+              {editing[file.path] !== undefined ? d.memory.save : d.memory.edit}
+            </button>
+          </div>
         </div>
       ))}
       <button className="btn btn-ghost" onClick={refresh}>{d.common.retry}</button>
