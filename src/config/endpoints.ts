@@ -88,6 +88,11 @@ export const endpoints = {
     instances: ["https://api.panoramax.xyz"],
   },
 
+  aerial: {
+    /** OpenAerialMap v2 STAC — keyless, CORS, CC BY imagery with thumbnails. */
+    stac: "https://api.imagery.hotosm.org/stac/search",
+  },
+
   mapillary: {
     api: "https://graph.mapillary.com",
     tiles: "https://tiles.mapillary.com",

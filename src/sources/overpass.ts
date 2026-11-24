@@ -5,7 +5,7 @@
  * progressively so the traveller sees the place being built.
  */
 import { endpoints } from "../config/endpoints";
-import { cached } from "./cache";
+import { cached, cachedWhen } from "./cache";
 import type { Bbox, Place, PlaceTags } from "./types";
 
 const UA = "niyvaru/1.0 (client-side prototype)";
@@ -67,6 +67,30 @@ function buildQuery(bbox: Bbox, selectors: Selector[]): string {
   const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
   const body = selectors.map((s) => `node${s.clause}(${b});way${s.clause}(${b});`).join("\n");
   return `[out:json][timeout:40];\n(\n${body}\n);\nout center tags;`;
+}
+
+/**
+ * The same selector set as CORE/FOOD/SHOPS, expressed as a predicate so the
+ * raw OpenStreetMap fallback can keep only real places. Street names, landuse
+ * and bare buildings are map geometry, not places a traveller can visit.
+ */
+const AMENITY_KINDS = new Set([
+  "pharmacy", "place_of_worship", "hospital", "clinic", "doctors", "dentist",
+  "bank", "atm", "toilets", "restaurant", "fast_food", "food_court",
+  "cafe", "bar", "pub", "biergarten", "police", "post_office", "townhall", "library",
+]);
+const TOURISM_KINDS = new Set(["hotel", "hostel", "guest_house", "apartment", "museum", "attraction", "artwork", "gallery"]);
+const LEISURE_KINDS = new Set(["park", "garden", "playground"]);
+const HISTORIC_KINDS = new Set(["monument", "memorial", "castle", "ruins"]);
+
+/** True when an OSM element carries one of the tags we assemble places from. */
+export function matchesKnownKind(tags: Record<string, string>): boolean {
+  if (tags.amenity && AMENITY_KINDS.has(tags.amenity)) return true;
+  if (tags.healthcare === "pharmacy") return true;
+  if (tags.tourism && TOURISM_KINDS.has(tags.tourism)) return true;
+  if (tags.leisure && LEISURE_KINDS.has(tags.leisure)) return true;
+  if (tags.historic && HISTORIC_KINDS.has(tags.historic)) return true;
+  return Boolean(tags.shop);
 }
 
 export function normalizeKind(tags: Record<string, string>): Kind {
@@ -133,10 +157,44 @@ async function runShard(
   return json.elements;
 }
 
+/**
+ * Public mirrors are shared and frequently saturated. One failed attempt is
+ * not a dead shard: retry the same query on a different mirror before giving up.
+ */
+async function runShardWithMirrorFallback(
+  preferred: number,
+  shardIndex: number,
+  query: string,
+  signal?: AbortSignal
+): Promise<OverpassElement[]> {
+  const total = endpoints.overpass.mirrors.length;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < Math.min(2, total); attempt++) {
+    // Each shard walks a different mirror on retry, so two shards never pile
+    // onto the same already-saturated server.
+    const index = (preferred + attempt * (shardIndex + 1)) % total;
+    try {
+      return await runShard(endpoints.overpass.mirrors[index], query, signal);
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
 export interface ShardProgress {
   shard: string;
   count: number;
   done: boolean;
+  /** True when every mirror tried for this shard failed. */
+  failed?: boolean;
+}
+
+export interface ShardedPlaces {
+  places: Place[];
+  /** Shard names whose mirrors all failed — coverage gaps to fill elsewhere. */
+  failedShards: string[];
 }
 
 function toPlaces(elements: OverpassElement[]): Place[] {
@@ -175,20 +233,39 @@ export async function fetchPlacesSharded(
   bbox: Bbox,
   onProgress: ((progress: ShardProgress) => void) | undefined,
   signal?: AbortSignal
-): Promise<Place[]> {
+): Promise<ShardedPlaces> {
   const cacheKey = `overpass:${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}`;
-  return cached(cacheKey, 6 * 3600_000, async () => {
+  // Only a result that produced places is worth remembering; an all-mirrors
+  // outage must retry next visit instead of locking in an empty city.
+  return cachedWhen(cacheKey, 6 * 3600_000, async () => {
     const settled = await Promise.allSettled(
-      SHARDS.map(async (shard) => {
-        const host = endpoints.overpass.mirrors[shard.mirror % endpoints.overpass.mirrors.length];
-        const elements = await runShard(host, buildQuery(bbox, shard.selectors), signal);
-        const places = toPlaces(elements);
-        onProgress?.({ shard: shard.name, count: places.length, done: true });
-        return places;
+      SHARDS.map(async (shard, shardIndex) => {
+        const query = buildQuery(bbox, shard.selectors);
+        try {
+          const elements = await runShardWithMirrorFallback(
+            shard.mirror % endpoints.overpass.mirrors.length,
+            shardIndex,
+            query,
+            signal
+          );
+          const places = toPlaces(elements);
+          onProgress?.({ shard: shard.name, count: places.length, done: true });
+          return { places, failed: false, shardName: shard.name };
+        } catch (e) {
+          if ((e as Error)?.name === "AbortError") throw e;
+          onProgress?.({ shard: shard.name, count: 0, done: false, failed: true });
+          return { places: [] as Place[], failed: true, shardName: shard.name };
+        }
       })
     );
-    const merged = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+    const merged = settled.flatMap((r) => (r.status === "fulfilled" ? r.value.places : []));
+    const failedShards = settled.flatMap((r) =>
+      r.status === "fulfilled" && r.value.failed ? [r.value.shardName] : []
+    );
     const seen = new Set<string>();
-    return merged.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
-  });
+    return {
+      places: merged.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true))),
+      failedShards,
+    };
+  }, (result) => result.places.length > 0);
 }

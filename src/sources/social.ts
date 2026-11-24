@@ -22,7 +22,7 @@ export async function mastodonRecent(meta: AreaMeta, limit = 10, signal?: AbortS
   return cached(key, 10 * 60_000, async () => {
     const results = await Promise.allSettled(
       endpoints.social.mastodon.flatMap((instance) =>
-        tags.slice(0, 3).map(async (tag) => {
+        tags.slice(0, 2).map(async (tag) => {
           const res = await fetch(
             `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag.replace(/^#/, ""))}?limit=${limit}`,
             { headers: { Accept: "application/json" }, signal }

@@ -1,8 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DirectChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import type { NiyvaruAgent } from "../agent/runtime";
 import type { Dictionary } from "../config/i18n";
+
+/**
+ * Model text arrives with whatever formatting the provider chose. Two things
+ * leak through raw if we render it verbatim: literal `\n` sequences from weak
+ * models, and markdown emphasis. Normalise both, then render a small safe
+ * subset (bold / italic / code). Everything else stays plain text.
+ */
+function renderText(raw: string): ReactNode {
+  const text = raw
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\(["'\\])/g, "$1");
+  const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\n]+\*)/g;
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    const token = match[0];
+    if (token.startsWith("**") || token.startsWith("__")) {
+      nodes.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("`")) {
+      nodes.push(<code key={key++}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<em key={key++}>{token.slice(1, -1)}</em>);
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
 
 /**
  * The conversation — the agent drives the map through typed tools; tool
@@ -18,6 +49,7 @@ export function ChatPanel({
   prefill,
   prefillNonce,
   onTurnComplete,
+  active,
 }: {
   d: Dictionary;
   agent: NiyvaruAgent;
@@ -27,6 +59,8 @@ export function ChatPanel({
   prefill?: string;
   prefillNonce?: number;
   onTurnComplete: (userText: string, assistantText: string) => void;
+  /** False while another surface covers this one; the log stays mounted. */
+  active: boolean;
 }) {
   const transport = useMemo(
     () =>
@@ -57,9 +91,12 @@ export function ChatPanel({
   const logRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    // Scrolling a hidden log measures zero height and would leave the
+    // conversation scrolled nowhere when the agent surface reopens.
+    if (!active) return;
     const log = logRef.current;
     if (log) log.scrollTop = log.scrollHeight;
-  }, [messages, status]);
+  }, [messages, status, active]);
 
   useEffect(() => {
     if (!prefill) return;
@@ -106,7 +143,30 @@ export function ChatPanel({
                 if (part.type === "text" && part.text.trim()) {
                   return (
                     <div key={i} className="bubble">
-                      {part.text}
+                      {renderText(part.text)}
+                    </div>
+                  );
+                }
+                if (
+                  (part.type === "tool-photos_for_place" || part.type === "tool-place_details") &&
+                  (part as { state?: string }).state === "output-available"
+                ) {
+                  const output = (part as { output?: { photos?: { thumb?: string; attribution?: string; license?: string }[] } }).output;
+                  const photos = (output?.photos ?? []).filter((p) => p.thumb);
+                  if (!photos.length) return null;
+                  return (
+                    <div key={i} className="chat-photos">
+                      {photos.map((p, j) => (
+                        <figure key={`${p.thumb}-${j}`}>
+                          <img
+                            src={p.thumb}
+                            alt=""
+                            loading="lazy"
+                            onError={(e) => (e.currentTarget.parentElement?.style.setProperty("display", "none"))}
+                          />
+                          <figcaption>{p.attribution}{p.license && p.license !== "unknown" ? ` · ${p.license}` : ""}</figcaption>
+                        </figure>
+                      ))}
                     </div>
                   );
                 }

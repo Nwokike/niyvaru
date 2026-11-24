@@ -11,13 +11,16 @@ import { matchByTitle, matchByTitleScore } from "./photoMatch";
 import { fetchPlacesSharded, type ShardProgress } from "./overpass";
 import { fetchPlacesFromOsmMap } from "./osmMap";
 import { storiesNear } from "./wikipedia";
-import { photosNear as panoramaxNear } from "./panoramax";
+import { photosNear as panoramaxNear, panoramaxRecentPulse } from "./panoramax";
+import { commonsRecentPulse } from "./commons";
+import { aerialPulse } from "./openaerialmap";
 import { walkingRoute } from "./walkingRoutes";
 import { newsForArea } from "./gdelt";
 import { mastodonRecent } from "./social";
 import { weatherFor } from "./weather";
 import { areaTimezone, computePrayer } from "./prayer";
 import { BASE_URL } from "../config/endpoints";
+import { debugError } from "../debug";
 import type {
   AreaMeta,
   AreaPack,
@@ -94,11 +97,17 @@ function nearest(lat: number, lon: number, places: Place[], withinM: number): Pl
 const PHOTO_MATCH_RADIUS_M = 300;
 /** Bounded galleries: keep the strongest photos only, never unbounded lists. */
 const MAX_PHOTOS_PER_PLACE = 6;
+/** Below this, Overpass coverage is too thin to trust; fill from the OSM map API. */
+const MIN_PLACES_FROM_OVERPASS = 12;
+/** The fallback must never hold the whole assembly hostage on a slow network. */
+const OSM_FALLBACK_TIMEOUT_MS = 20_000;
 
-async function optional<T>(run: (signal?: AbortSignal) => Promise<T>): Promise<T | undefined> {
+async function optional<T>(label: string, run: (signal?: AbortSignal) => Promise<T>): Promise<T | undefined> {
   try {
     return await run();
-  } catch {
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") throw e;
+    debugError("assemble", `${label} failed`, String((e as Error).message ?? e));
     return undefined;
   }
 }
@@ -124,12 +133,21 @@ async function runStage<T>(
 
 /** Optional per-area promotional placements — data files, never code. */
 async function promotionsFor(meta: AreaMeta, signal?: AbortSignal): Promise<PulseItem[]> {
-  return optional(async () => {
+  return optional("Promotions", async () => {
     const res = await fetch(`${BASE_URL}promotions.json`, { cache: "no-cache", signal });
     if (!res.ok) return [];
-    const json = (await res.json()) as { placements?: (PulseItem & { areaId?: string })[] };
+    // Static hosts answer unknown files with the SPA index.html and HTTP 200.
+    // Only accept a real JSON body so a missing feed stays empty, not an error.
+    const type = res.headers.get("content-type") ?? "";
+    if (!type.includes("json")) return [];
+    let json: { placements?: (PulseItem & { areaId?: string })[] };
+    try {
+      json = (await res.json()) as { placements?: (PulseItem & { areaId?: string })[] };
+    } catch {
+      return [];
+    }
     return (json.placements ?? [])
-      .filter((p) => !p.areaId || p.areaId === meta.id)
+      .filter((p) => p && typeof p.id === "string" && (!p.areaId || p.areaId === meta.id))
       .map(({ areaId: _areaId, ...item }) => ({ ...item, kind: "promoted" as const }));
   }).then((v) => v ?? []);
 }
@@ -163,28 +181,54 @@ export async function assembleArea(
 
   // ——— everything launches in parallel ———
   const placesPromise = runStage("places", onStage, async () => {
-    const places = await fetchPlacesSharded(bbox, (progress: ShardProgress) => {
+    const { places, failedShards } = await fetchPlacesSharded(bbox, (progress: ShardProgress) => {
       onStage({
         key: "places",
         state: "active",
-        detail: `${progress.shard} shard: ${progress.count} places`,
+        detail: progress.failed
+          ? `${progress.shard} shard unavailable`
+          : `${progress.shard} shard: ${progress.count} places`,
       });
     }, signal);
-    if (!places.length) {
-      onStage({ key: "places", state: "active", detail: "overpass unavailable — reading OpenStreetMap directly" });
-      const fallback = await fetchPlacesFromOsmMap(bbox, signal);
-      onStage({ key: "places", state: "active", detail: `${fallback.length} places from OpenStreetMap` });
-      counts.places = fallback.length;
-      return fallback;
+    let result = places;
+    // Public Overpass mirrors saturate. Too few results, or a shard whose
+    // mirrors all failed, is not coverage — fill the gaps from the raw OSM map
+    // API so any city still assembles into a usable place set.
+    if (places.length < MIN_PLACES_FROM_OVERPASS || failedShards.length > 0) {
+      onStage({
+        key: "places",
+        state: "active",
+        detail: places.length
+          ? `overpass returned ${places.length} — filling from OpenStreetMap`
+          : "overpass unavailable — reading OpenStreetMap directly",
+      });
+      // The supplement is best-effort: if it times out or fails, whatever
+      // Overpass already produced still ships.
+      let filled: Place[] = [];
+      try {
+        const deadline = AbortSignal.timeout(OSM_FALLBACK_TIMEOUT_MS);
+        filled = await fetchPlacesFromOsmMap(bbox, signal ? AbortSignal.any([signal, deadline]) : deadline);
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError" && signal?.aborted) throw e;
+        debugError("assemble", "OpenStreetMap fill failed", String((e as Error).message ?? e));
+      }
+      const known = new Set(places.map((p) => p.id));
+      const extra = filled.filter((p) => !known.has(p.id));
+      result = [...places, ...extra];
+      onStage({
+        key: "places",
+        state: "active",
+        detail: `${result.length} places (${places.length} overpass + ${extra.length} open street map)`,
+      });
     }
-    counts.places = places.length;
-    return places;
+    counts.places = result.length;
+    return result;
   }, [], () => `${counts.places} places`);
 
   const photosPromise = runStage("photos", onStage, async () => {
     const [commons, pano] = await Promise.all([
-      optional(() => anchoredPhotosNear(meta.lat, meta.lon, meta.radiusM, 120, signal)),
-      optional(() => panoramaxNear(meta.lat, meta.lon, meta.radiusM, 60, signal)),
+      optional("Commons photos", () => anchoredPhotosNear(meta.lat, meta.lon, meta.radiusM, 120, signal)),
+      optional("Panoramax photos", () => panoramaxNear(meta.lat, meta.lon, meta.radiusM, 60, signal)),
     ]);
     if (pano) attribution["Panoramax contributors"] = "CC-BY-SA 4.0";
     const value = { commons: commons ?? [], pano };
@@ -200,13 +244,20 @@ export async function assembleArea(
   }, [], () => `${counts.stories} stories`);
 
   const pulsePromise = runStage("pulse", onStage, async () => {
-    const [news, masto, promos, weatherDays, tz] = await Promise.all([
-      optional(() => newsForArea(areaQueryName(meta), meta.feeds?.gdeltQuery, signal)),
-      optional(() => mastodonRecent(meta, 10, signal)),
+    const bbox = bboxOf(meta);
+    const [news, masto, promos, weatherDays, tz, commonsPulse, panoPulse, aerial] = await Promise.all([
+      optional("GDELT news", () => newsForArea(areaQueryName(meta), meta.feeds?.gdeltQuery, signal)),
+      optional("Mastodon", () => mastodonRecent(meta, 6, signal)),
       promotionsFor(meta, signal),
-      optional(() => weatherFor(meta.lat, meta.lon, signal)),
-      optional(() => areaTimezone(meta.lat, meta.lon, signal)),
+      optional("Weather", () => weatherFor(meta.lat, meta.lon, signal)),
+      optional("Timezone", () => areaTimezone(meta.lat, meta.lon, signal)),
+      optional("Commons pulse", () => commonsRecentPulse(meta.lat, meta.lon, meta.radiusM, signal)),
+      optional("Panoramax pulse", () => panoramaxRecentPulse(bbox, signal)),
+      optional("Aerial pulse", () => aerialPulse(bbox, signal)),
     ]);
+    attribution["Wikimedia Commons contributors"] = "per-photo licences";
+    attribution["Panoramax contributors"] = "CC-BY-SA 4.0";
+    attribution["OpenAerialMap contributors"] = "CC BY 4.0";
     const prayerDays = computePrayer(meta.lat, meta.lon, meta.prayerMethod ?? "mwl", 7, tz ?? "UTC");
     attribution["Prayer times"] = "computed locally (adhan)";
     if (weatherDays?.length) {
@@ -214,12 +265,17 @@ export async function assembleArea(
         ? "CC BY 4.0"
         : "open-access";
     }
+    // Per-source caps keep one noisy hashtag timeline from crowding out the
+    // photographs, news and weather the traveller came for.
     const pulseItems: PulseItem[] = [
       ...(weatherDays?.length ? [weatherPulseItem(weatherDays[0], meta)] : []),
-      ...(news ?? []),
-      ...(masto ?? []),
-      ...promos,
-    ];
+      ...(news ?? []).slice(0, 8),
+      ...(commonsPulse ?? []).slice(0, 8),
+      ...(panoPulse ?? []).slice(0, 8),
+      ...(aerial ?? []).slice(0, 4),
+      ...(masto ?? []).slice(0, 8),
+      ...promos.slice(0, 4),
+    ].slice(0, 40);
     counts.pulse = pulseItems.length;
       return { pulse: pulseItems, weather: weatherDays ?? [], prayer: prayerDays };
   }, { pulse: [], weather: [], prayer: [] }, (v) => `${v.pulse.length} updates`);
@@ -344,7 +400,7 @@ export async function assembleArea(
   }
 
   onStage({ key: "places", state: "done", detail: `${counts.places} places` });
-  onStage({ key: "story", state: counts.stories > 0 ? "done" : stories.length ? "done" : "failed", detail: `${counts.stories} stories` });
+  onStage({ key: "story", state: stories.length ? "done" : "failed", detail: `${counts.stories} stories` });
 
   const pack: AreaPack = {
     id: meta.id,

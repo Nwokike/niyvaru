@@ -19,11 +19,6 @@ interface KvRecord {
   expiresAt: number;
 }
 
-interface KvRecord {
-  key: string;
-  value: unknown;
-  expiresAt: number;
-}
 interface MemFileRecord {
   path: string;
   content: string;
@@ -113,6 +108,26 @@ export async function cached<T>(
   if (hit && hit.expiresAt > Date.now()) return hit.value as T;
   const value = await producer();
   await d.put(KV, { key, value, expiresAt: Date.now() + ttlMs } satisfies KvRecord, key);
+  return value;
+}
+
+/**
+ * Cache only results worth keeping. A transient outage must not be remembered
+ * as authoritative for hours, or every later visit repeats the slow path.
+ */
+export async function cachedWhen<T>(
+  key: string,
+  ttlMs: number,
+  producer: () => Promise<T>,
+  keep: (value: T) => boolean
+): Promise<T> {
+  const d = await db();
+  const hit = await d.get(KV, key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value as T;
+  const value = await producer();
+  if (keep(value)) {
+    await d.put(KV, { key, value, expiresAt: Date.now() + ttlMs } satisfies KvRecord, key);
+  }
   return value;
 }
 

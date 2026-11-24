@@ -73,10 +73,12 @@ export function PulsePanel({
   }, [meta.id, meta.name, JSON.stringify(meta.feeds)]);
 
   const merged = useMemo(() => {
+    // Live social items are capped in the merge too: an active hashtag stream
+    // must not push the weather, news and photographs out of the feed.
     const items: PulseItem[] = [
-      ...live,
+      ...live.slice(0, 8),
       ...pack.pulse,
-      ...localPosts.map<PulseItem>((p) => ({
+      ...localPosts.slice(0, 10).map<PulseItem>((p) => ({
         id: `local/${p.id}`,
         source: "local",
         kind: "organic",
@@ -150,7 +152,7 @@ export function PulsePanel({
       ) : null}
       {hasPulse === false && (weather || prayer) ? <p className="muted">{d.pulse.empty}</p> : null}
       {merged.map((item) => (
-        <article key={item.id} className="pulse-item">
+        <article key={item.id} className="pulse-card panel-card">
           <div className="pulse-head">
             <span className="pulse-source">
               {item.source === "local" ? d.pulse.localDevice : sourceLabel(d, item.source)}
@@ -163,13 +165,20 @@ export function PulsePanel({
             ) : null}
             <span>{timeAgo(d, item.at)}</span>
           </div>
+          {item.image ? (
+            <a href={item.image.sourceUrl ?? item.url ?? "#"} target="_blank" rel="noreferrer" className="pulse-image-link">
+              <img className="pulse-image" src={item.image.thumbUrl} alt="" loading="lazy" />
+            </a>
+          ) : null}
           {item.url ? (
             <a href={item.url} target="_blank" rel="noreferrer">
-              <p>{item.title}</p>
+              <p className="pulse-title">{item.title}</p>
             </a>
           ) : (
-            <p>{item.title}</p>
+            <p className="pulse-title">{item.title}</p>
           )}
+          {item.text ? <p className="muted">{item.text}</p> : null}
+          {item.image ? <p className="pulse-credit">{item.image.credit}{item.image.license ? ` · ${item.image.license}` : ""}</p> : null}
           {item.sponsor?.note ? <p className="muted">{item.sponsor.note}</p> : null}
         </article>
       ))}

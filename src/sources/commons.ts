@@ -6,7 +6,8 @@
  */
 import { endpoints } from "../config/endpoints";
 import { cachedWithRefresh } from "./cache";
-import type { Photo } from "./types";
+import { debugLog } from "../debug";
+import type { Photo, PulseItem } from "./types";
 
 export interface AnchoredPhoto {
   photo: Photo;
@@ -16,10 +17,16 @@ export interface AnchoredPhoto {
   title: string;
   /** Human-readable name from extmetadata (may still contain markup). */
   objectName?: string;
+  /** Source-supplied last change time, used by the happening feed. */
+  at?: string;
+  /** Commons file description page. */
+  sourceUrl?: string;
 }
 
 interface CommonsImageInfo {
   url: string;
+  descriptionurl?: string;
+  timestamp?: string;
   thumburl?: string;
   extmetadata?: {
     Artist?: { value: string };
@@ -73,8 +80,9 @@ export async function anchoredPhotosNear(
   signal?: AbortSignal
 ): Promise<AnchoredPhoto[]> {
   const radius = Math.min(Math.max(radiusM, 10), 10000);
-  const key = `commons-anchored:${lat.toFixed(4)},${lon.toFixed(4)},${radius},${limit}`;
+  const key = `commons-anchored-v2:${lat.toFixed(4)},${lon.toFixed(4)},${radius},${limit}`;
   return cachedWithRefresh(key, COMMONS_TTL_MS, async () => {
+    debugLog("commons", "geosearch", { lat, lon, radius, limit });
     const params = new URLSearchParams({
       action: "query",
       format: "json",
@@ -83,9 +91,9 @@ export async function anchoredPhotosNear(
       ggscoord: `${lat}|${lon}`,
       ggsradius: String(radius),
       ggslimit: String(Math.min(Math.max(limit, 1), 500)),
-      gsnamespace: "6",
+      ggsnamespace: "6",
       prop: "coordinates|imageinfo",
-      iiprop: "url|extmetadata",
+      iiprop: "url|extmetadata|timestamp",
       iiextmetadatafilter: "Artist|LicenseShortName|ObjectName",
       iiurlwidth: String(endpoints.commons.thumbWidth),
     });
@@ -121,9 +129,50 @@ export async function anchoredPhotosNear(
         lon: coord.lon,
         title: page.title,
         objectName: stripHtml(info.extmetadata?.ObjectName?.value),
+        at: info.timestamp,
+        sourceUrl: info.descriptionurl,
       });
     }
     return out;
+  });
+}
+
+/**
+ * Commons photographs near the area. Recent uploads lead; when a city has no
+ * upload inside the window, the newest available photographs still appear,
+ * undated, so the feed never hides real imagery behind a calendar rule. The
+ * Commons timestamp is a file change date, never an invented capture date.
+ */
+export async function commonsRecentPulse(
+  lat: number,
+  lon: number,
+  radiusM: number,
+  signal?: AbortSignal
+): Promise<PulseItem[]> {
+  const photos = await anchoredPhotosNear(lat, lon, radiusM, 80, signal);
+  const cutoff = Date.now() - 30 * 24 * 3600_000;
+  const dated = photos.filter((p) => p.at).sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+  const fresh = dated.filter((p) => new Date(p.at!).getTime() >= cutoff);
+  const chosen = fresh.length ? fresh : dated;
+  return chosen.slice(0, 8).map<PulseItem>((p) => {
+    const isFresh = p.at != null && new Date(p.at).getTime() >= cutoff;
+    return {
+      id: `commons/${p.title}`,
+      source: "commons",
+      kind: "organic",
+      title: p.objectName ?? p.title.replace(/^File:/, ""),
+      text: isFresh ? "Recently updated photograph near this area" : "Photograph near this area",
+      at: isFresh ? p.at : undefined,
+      lat: p.lat,
+      lon: p.lon,
+      image: {
+        url: p.photo.url,
+        thumbUrl: p.photo.thumbUrl,
+        credit: p.photo.attribution,
+        license: p.photo.license,
+        sourceUrl: p.sourceUrl,
+      },
+    };
   });
 }
 

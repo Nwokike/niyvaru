@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { NiyvaruAgent } from "./agent/runtime";
 import type { MapApi } from "./map/mapView";
 import { getOrAssembleArea } from "./area/store";
@@ -17,6 +17,10 @@ import { DiscoverDossier } from "./ui/DiscoverDossier";
 import { PulsePanel } from "./ui/PulsePanel";
 import { BriefPanel } from "./ui/BriefPanel";
 import { MemoryPanel } from "./ui/MemoryPanel";
+import { MapShell } from "./ui/MapShell";
+import { SURFACES, type Detent, type SurfaceId } from "./config/surfaces";
+import { localClock, localHourNow, localTimeZone, subscribeLocalTime } from "./config/time";
+import { shellReducer, initialShellState } from "./state/shell";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "./sources/types";
 
 const ChatPanel = lazy(() => import("./ui/ChatPanel").then((m) => ({ default: m.ChatPanel })));
@@ -25,7 +29,6 @@ import type { TimePhase } from "./agent/tools";
 
 type View = "form" | "assembling" | "explore";
 type StageView = { state: StageState; detail?: string };
-type Tab = "explore" | "pulse" | "brief" | "memory";
 
 const EMPTY_STAGES: Record<StageKey, StageView> = {
   places: { state: "pending" },
@@ -35,7 +38,6 @@ const EMPTY_STAGES: Record<StageKey, StageView> = {
   pulse: { state: "pending" },
 };
 
-const PHASE_T: Record<TimePhase, number> = { dawn: 0, day: 1 / 3, golden: 2 / 3, night: 1 };
 // Named stops on the 24h dial (Sete Colinas pattern)
 const TOD_STOPS: { key: TimePhase; label: string; hour: number }[] = [
   { key: "dawn", label: "Dawn", hour: 6.5 },
@@ -77,16 +79,13 @@ export function App() {
   const [stages, setStages] = useState<Record<StageKey, StageView>>(EMPTY_STAGES);
   const [revealing, setRevealing] = useState(false);
   const [hero, setHero] = useState<AreaPack["heroPhoto"]>(undefined);
-  const [tab, setTab] = useState<Tab>("explore");
+  const [shell, shellDispatch] = useReducer(shellReducer, initialShellState);
   const [activeKindGroup, setActiveKindGroup] = useState<string | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
   const [walking, setWalking] = useState(false);
-  // The hour auto-follows the browser's local time — night opens dark,
-  // golden hour opens warm. The slider lets you override it.
-  const [tod, setTod] = useState(() => {
-    const h = new Date().getHours() + new Date().getMinutes() / 60;
-    return h;
-  });
+  const [userLocation, setUserLocation] = useState<{ lat: number; lon: number } | null>(null);
+  // The hour follows the phone's local clock. The Atmosphere sheet can override it.
+  const [tod, setTod] = useState(() => localHourNow());
   const [agent, setAgent] = useState<NiyvaruAgent | null>(null);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [memoryRev, setMemoryRev] = useState(0);
@@ -95,19 +94,26 @@ export function App() {
   const [discoverIndex, setDiscoverIndex] = useState(0);
   const [chatPrefill, setChatPrefill] = useState("");
   const [chatPrefillNonce, setChatPrefillNonce] = useState(0);
-  const [layersOpen, setLayersOpen] = useState(false);
+  const [peekAsk, setPeekAsk] = useState("");
   const todRef = useRef(tod);
   todRef.current = tod;
 
+  const openSurface = useCallback((surface: SurfaceId, detent?: Detent) => {
+    shellDispatch({ type: "openSurface", surface, detent });
+  }, []);
+  const setDetent = useCallback((detent: Detent) => {
+    shellDispatch({ type: "setDetent", detent });
+  }, []);
+
+  // Every assembled place is browsable. A dot on the map that the dossier
+  // cannot reach is a dead end, so there is no showcase cap here.
   const discoverPlaces = useMemo(() => {
     if (!pack) return [];
     if (activeKindGroup) {
       const allowed = new Set(KIND_GROUPS[activeKindGroup] ?? []);
       return pack.places.filter((p) => allowed.has(p.kind));
     }
-    const withStory = pack.places.filter((p) => p.story || p.photos.length > 0);
-    if (withStory.length >= 6) return withStory;
-    return pack.places.slice(0, 30);
+    return pack.places;
   }, [pack, activeKindGroup]);
 
   const selectDiscoverIndex = useCallback(
@@ -119,15 +125,23 @@ export function App() {
       if (target) {
         setPlace(target);
         mapRef.current?.focusPlace(target, () => setPlace(target));
+        openSurface("explore", "half");
       }
     },
-    [discoverPlaces]
+    [discoverPlaces, openSurface]
   );
+
+  // A new area has its own place list; a stale index would point past its end
+  // and leave the dossier blank even though the map is full of pins.
+  useEffect(() => {
+    setDiscoverIndex(0);
+  }, [meta?.id]);
 
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapApi | null>(null);
   const walkRef = useRef<WalkHandle | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const noticeTimerRef = useRef<number | undefined>(undefined);
   const packRef = useRef<AreaPack | null>(null);
   packRef.current = pack;
   const localeRef = useRef<Locale>(locale);
@@ -149,6 +163,31 @@ export function App() {
     mapRef.current?.labelLanguage(locale === "ar" ? "ar" : "en");
   }, [locale]);
 
+  useEffect(() => subscribeLocalTime(() => setTod(localHourNow())), []);
+
+  useEffect(() => () => {
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+  }, []);
+
+  const viewportInsetRef = useRef(0);
+  useEffect(() => {
+    const apply = (): void => {
+      const surface = document.querySelector<HTMLElement>(".surface");
+      const mobile = window.matchMedia("(max-width: 720px)").matches;
+      const inset = !mobile || !surface
+        ? 0
+        : Math.max(0, window.innerHeight - surface.getBoundingClientRect().top);
+      viewportInsetRef.current = inset;
+      mapRef.current?.setViewportInset(inset);
+    };
+    const id = window.requestAnimationFrame(apply);
+    window.addEventListener("resize", apply);
+    return () => {
+      window.cancelAnimationFrame(id);
+      window.removeEventListener("resize", apply);
+    };
+  }, [shell.detent, view]);
+
   // From the form: select the area — assembly starts on submit
   const selectArea = useCallback((next: AreaMeta) => {
     setMeta(next);
@@ -165,7 +204,7 @@ export function App() {
     setStages(EMPTY_STAGES);
     setRevealing(false);
     setPlace(null);
-    setTab("explore");
+    shellDispatch({ type: "reset" });
     setView("assembling");
   }, []);
 
@@ -227,11 +266,13 @@ export function App() {
           return null;
         }
         mapRef.current = api;
+        api.setViewportInset(viewportInsetRef.current);
         if (packRef.current) api.setPlaces(packRef.current);
         api.onPlaceClick(
           (p) => {
             setPlace(p);
             api.focusPlace(p, () => setPlace(p));
+            openSurface("explore", "half");
             const foundIdx = discoverPlacesRef.current.findIndex((x) => x.id === p.id);
             if (foundIdx >= 0) setDiscoverIndex(foundIdx);
           },
@@ -267,6 +308,8 @@ export function App() {
         },
         openPlaceCard(p: Place) {
           setPlace(p);
+          const idx = discoverPlacesRef.current.findIndex((x) => x.id === p.id);
+          if (idx >= 0) setDiscoverIndex(idx);
         },
         filterKinds(kinds: string[] | null) {
           mapRef.current?.filterKinds(kinds);
@@ -281,6 +324,12 @@ export function App() {
           const hour = TOD_STOPS.find((s) => s.key === phase)?.hour ?? 18.5;
           mapRef.current?.setHour(hour);
           setTod(hour);
+        },
+        openSurface(surface: SurfaceId, detent?: Detent) {
+          openSurface(surface, detent);
+        },
+        setSurfaceDetent(detent: Detent) {
+          setDetent(detent);
         },
         clearView() {
           mapRef.current?.filterKinds(null);
@@ -360,14 +409,44 @@ export function App() {
     }
   }, [d]);
 
+  const locateMe = useCallback((): void => {
+    if (!navigator.geolocation) {
+      setNotice(d.explore.errors.locationUnsupported);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        setUserLocation(point);
+        mapRef.current?.setUserLocation(point.lat, point.lon);
+      },
+      (err) => {
+        // The three browser failure modes need different advice; a generic
+        // "unavailable" sent users looking for a permission toggle that was fine.
+        const code = (err as GeolocationPositionError | null)?.code;
+        const key =
+          code === 1 ? "locationDenied" : code === 3 ? "locationTimeout" : code === 2 ? "locationUnavailable" : "noLocation";
+        const message = d.explore.errors[key];
+        setNotice(message);
+        if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = window.setTimeout(
+          () => setNotice((current) => (current === message ? "" : current)),
+          8000
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }, [d]);
+
   const walkToPlace = useCallback(
     async (target: Place): Promise<void> => {
-      const m = meta ?? (pack ? { lat: pack.center[0], lon: pack.center[1] } as AreaMeta : null);
-      if (!m) return;
+      const origin = userLocation ?? (meta ? { lat: meta.lat, lon: meta.lon } : pack ? { lat: pack.center[0], lon: pack.center[1] } : null);
+      if (!origin) return;
       setWalking(true);
       try {
+        // walkingRoute takes [lat, lon] pairs (it converts to GeoJSON order).
         const route = await walkingRoute(d.walk.routeTo.replace("{name}", target.nameEn ?? target.name), [
-          [m.lat, m.lon],
+          [origin.lat, origin.lon],
           [target.lat, target.lon],
         ]);
         mapRef.current?.showRoute(route, false);
@@ -377,7 +456,7 @@ export function App() {
         setNotice(d.explore.errors.noRoute);
       }
     },
-    [meta, pack, beginWalk, d]
+    [userLocation, meta, pack, beginWalk, d]
   );
 
   // ——— derived ———
@@ -402,13 +481,19 @@ export function App() {
   const lookupPlace = (id: string): Place | undefined => pack?.places.find((p) => p.id === id);
 
   return (
-    <div className="app" data-view={view} data-walking={walking ? "true" : "false"}>
+    <div
+      className="app"
+      data-view={view}
+      data-walking={walking ? "true" : "false"}
+      data-surface={shell.surface}
+      data-detent={shell.detent}
+    >
       <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
       {view === "explore" && discoverPlaces.length ? (
         <ul className="sr-only" aria-label={d.a11y.placeList}>
           <li>{d.explore.keyboardHelp}</li>
-          {discoverPlaces.slice(0, 60).map((p, idx) => (
+          {discoverPlaces.map((p, idx) => (
             <li key={p.id}>
               <button
                 type="button"
@@ -441,196 +526,191 @@ export function App() {
       ) : null}
 
       {view === "explore" ? (
-        <>
-          <header className="topbar">
-            <div className="brand">
-              <span className="brand-mark">ن</span>
-              <div>
-                <div className="brand-name">{d.brand.name}</div>
-                <div className="brand-sub">
-                  {meta?.name ?? ""}
-                  {pack ? ` · ${pack.places.length}` : ""}
-                </div>
-              </div>
-            </div>
-            {pack ? (
-              <button
-                type="button"
-                className="ambient-pill chip"
-                onClick={() => setTab("pulse")}
-                title={d.tabs.pulse}
-              >
-                {pack.weather[0] ? `🌤 ${pack.weather[0].tempMaxC}°C ` : ""}
-                {pack.prayer[0] ? `· 🕌 ${pack.prayer[0].asr ? `${d.pulse.sources.prayer} ${pack.prayer[0].asr}` : pack.prayer[0].date} ` : ""}
-                · {todLabel(d, nearestStop(tod))}
-              </button>
-            ) : null}
-            <div className="topbar-actions">
-              <div className="tod" role="group" aria-label={d.explore.timeOfDayLabel} title={d.explore.timeOfDayLocal}>
-                <div className="tod-readout">
-                  <span className="tod-clock">{todClock(tod)}</span>
-                  <span className="tod-phase">· {todLabel(d, nearestStop(tod))}</span>
-                </div>
-                <input
-                  className="tod-slider"
-                  type="range"
-                  min={0}
-                  max={24}
-                  step={0.1}
-                  value={tod}
-                  onChange={(e) => applyTod(Number(e.target.value))}
-                  aria-label={d.explore.timeOfDayLabel}
-                  aria-valuetext={d.a11y.timeOfDay.replace("{clock}", todClock(tod)).replace("{phase}", todLabel(d, nearestStop(tod)))}
-                />
-                <div className="tod-stops">
-                  {TOD_STOPS.map((stop) => (
-                    <button key={stop.key} data-active={nearestStop(tod).key === stop.key && Math.abs(tod - stop.hour) < 0.15} onClick={() => applyTod(stop.hour)}>
-                      {todLabel(d, stop)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="lang">
-                <select
-                  className="lang-select"
-                  value={locale}
-                  onChange={(e) => setLocaleState(e.target.value as Locale)}
-                  aria-label="Language / اللغة"
+        <MapShell
+          d={d}
+          shell={shell}
+          metaName={meta?.name ?? ""}
+          pack={pack}
+          todLabel={todLabel(d, nearestStop(tod))}
+          clock={todClock(tod)}
+          walking={walking}
+          walkingDistance={walking ? (userLocation ? d.walk.fromYou : d.walk.fromCentre) : undefined}
+          notice={notice}
+          counts={{
+            explore: discoverPlaces.length,
+            pulse: pack?.pulse.length ?? 0,
+            brief: pack?.places.filter((p) => p.story).length ?? 0,
+          }}
+          locale={locale}
+          kindGroup={activeKindGroup}
+          onKindGroup={setKindGroup}
+          onLocale={setLocaleState}
+          onOpenSearch={() => setShowIntake(true)}
+          onLocate={locateMe}
+          onOpenAtmosphere={() => shellDispatch({ type: "toggleAtmosphere" })}
+          onOpenSurface={openSurface}
+          onSetDetent={setDetent}
+          onDismissNotice={() => setNotice("")}
+        >
+          {shell.detent === "peek" ? (
+            <div className="surface-compact rise">
+              <span className="eyebrow">{d.shell.peek} · {SURFACES.find((s) => s.id === shell.surface)?.label(d)}</span>
+              {shell.surface === "explore" ? (
+                <button
+                  type="button"
+                  className="compact-row"
+                  onClick={() => {
+                    if (!place && discoverPlaces[0]) selectDiscoverIndex(0);
+                    setDetent("half");
+                  }}
                 >
-                  <option value="en">English</option>
-                  <option value="ar">العربية</option>
-                </select>
-              </div>
-              <button className="chip" onClick={() => setShowIntake(true)} aria-label={d.intake.title}>
-                ✎
-              </button>
-              <button className="chip" onClick={() => setTab("memory")} aria-label={d.memory.title}>
-                🧠
-              </button>
-              <button className="chip" onClick={() => { setView("form"); setMeta(null); setPack(null); }} aria-label={d.explore.changeArea} title={d.explore.changeArea}>
-                ⟲
-              </button>
+                  <span>{d.shell.places.replace("{n}", String(discoverPlaces.length))}</span>
+                  <strong>{place ? (place.nameEn ?? place.name) : discoverPlaces[0] ? (discoverPlaces[0].nameEn ?? discoverPlaces[0].name) : d.discover.noPlaces}</strong>
+                  <span aria-hidden="true">→</span>
+                </button>
+              ) : shell.surface === "pulse" ? (
+                <button type="button" className="compact-row" onClick={() => setDetent("half")}>
+                  <span>{d.shell.happening.replace("{n}", String(pack?.pulse.length ?? 0))}</span>
+                  <strong>{pack?.pulse[0]?.title ?? d.pulse.empty}</strong>
+                  <span aria-hidden="true">→</span>
+                </button>
+              ) : shell.surface === "brief" ? (
+                <button type="button" className="compact-row" onClick={() => setDetent("half")}>
+                  <span>{d.tabs.brief}</span>
+                  <strong>{pack?.places.find((p) => p.story)?.story?.title ?? d.brief.noStory}</strong>
+                  <span aria-hidden="true">→</span>
+                </button>
+              ) : shell.surface === "agent" ? (
+                <form
+                  className="compact-ask"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const text = peekAsk.trim();
+                    if (!text) { setDetent("half"); return; }
+                    setChatPrefill(text);
+                    setChatPrefillNonce((n) => n + 1);
+                    setPeekAsk("");
+                    setDetent("half");
+                  }}
+                >
+                  <input
+                    className="field"
+                    value={peekAsk}
+                    placeholder={place ? d.discover.askAbout.replace("{name}", place.nameEn ?? place.name) : d.explore.askPlaceholder}
+                    aria-label={d.explore.askPlaceholder}
+                    onChange={(e) => setPeekAsk(e.target.value)}
+                  />
+                  <button type="submit" className="btn btn-ghost" aria-label={d.shell.ask}>→</button>
+                </form>
+              ) : (
+                <button type="button" className="compact-row" onClick={() => setDetent("half")}>
+                  <span>{d.shell.you}</span>
+                  <strong>{d.memory.title}</strong>
+                  <span aria-hidden="true">→</span>
+                </button>
+              )}
             </div>
-          </header>
-
-          {notice ? (
-            <div className="notice" role="alert">
-              <span>{notice}</span>
-              <button type="button" className="notice-dismiss" onClick={() => setNotice("")} aria-label={d.common.dismiss}>
-                ✕
-              </button>
-            </div>
+          ) : shell.surface === "explore" ? (
+            <>
+              {discoverPlaces.length > 0 && place ? (
+                <DiscoverDossier
+                  d={d}
+                  places={discoverPlaces}
+                  currentIndex={discoverIndex}
+                  onSelectIndex={selectDiscoverIndex}
+                  walking={walking}
+                  keyboardEnabled={!showIntake && !walking}
+                  onWalk={(p) => void walkToPlace(p)}
+                  onAsk={(p) => {
+                    setChatPrefill(d.discover.askAbout.replace("{name}", p.nameEn ?? p.name));
+                    setChatPrefillNonce((n) => n + 1);
+                    openSurface("agent", "half");
+                  }}
+                  onClose={() => {
+                    setPlace(null);
+                    mapRef.current?.clearFocus();
+                  }}
+                />
+              ) : place ? (
+                <PlaceCard
+                  d={d}
+                  place={place}
+                  walking={walking}
+                  onWalk={(p) => void walkToPlace(p)}
+                  onClose={() => {
+                    setPlace(null);
+                    mapRef.current?.clearFocus();
+                  }}
+                />
+              ) : discoverPlaces[0] ? (
+                <button type="button" className="discover-preview rise" onClick={() => selectDiscoverIndex(0)}>
+                  <span className="eyebrow">{d.tabs.brief} · {discoverPlaces.length} {d.welcome.featured.toLowerCase()}</span>
+                  <h4 className="discover-preview-title">{discoverPlaces[0].nameEn ?? discoverPlaces[0].name} →</h4>
+                </button>
+              ) : (
+                <p className="muted">{d.discover.noPlaces}</p>
+              )}
+            </>
+          ) : shell.surface === "pulse" && pack ? (
+            <PulsePanel d={d} meta={meta ?? ({ id: pack.id, name: pack.name, lat: pack.center[0], lon: pack.center[1], radiusM: pack.radiusM, feeds: pack.feeds } as AreaMeta)} pack={pack} />
+          ) : shell.surface === "brief" && pack ? (
+            <BriefPanel d={d} pack={pack} />
+          ) : shell.surface === "memory" ? (
+            <MemoryPanel d={d} />
           ) : null}
 
-          <aside className="panel">
-            <nav className="panel-tabs">
-              {(["explore", "pulse", "brief", "memory"] as Tab[]).map((key) => (
-                <button key={key} data-active={tab === key} onClick={() => setTab(key)}>
-                  {d.tabs[key]}
-                </button>
-              ))}
-            </nav>
-            <div className="panel-body">
-              {tab === "explore" ? (
-                <>
-                  {discoverPlaces.length > 0 && place ? (
-                    <DiscoverDossier
-                      d={d}
-                      places={discoverPlaces}
-                      currentIndex={discoverIndex}
-                      onSelectIndex={selectDiscoverIndex}
-                      walking={walking}
-                      keyboardEnabled={!showIntake && !walking}
-                      onWalk={(p) => void walkToPlace(p)}
-                      onAsk={(p) => {
-                        setTab("explore");
-                        setChatPrefill(d.discover.askAbout.replace("{name}", p.nameEn ?? p.name));
-                        setChatPrefillNonce((n) => n + 1);
-                      }}
-                      onClose={() => {
-                        setPlace(null);
-                        mapRef.current?.clearFocus();
-                      }}
-                    />
-                  ) : place ? (
-                    <PlaceCard
-                      d={d}
-                      place={place}
-                      walking={walking}
-                      onWalk={(p) => void walkToPlace(p)}
-                      onClose={() => {
-                        setPlace(null);
-                        mapRef.current?.clearFocus();
-                      }}
-                    />
-                  ) : discoverPlaces[0] ? (
-                    <div
-                      className="discover-preview rise"
-                      onClick={() => selectDiscoverIndex(0)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && selectDiscoverIndex(0)}
-                    >
-                      <span className="eyebrow">{d.tabs.brief} · {discoverPlaces.length} {d.welcome.featured.toLowerCase()}</span>
-                      <h4 className="discover-preview-title">
-                        {discoverPlaces[0].nameEn ?? discoverPlaces[0].name} →
-                      </h4>
-                    </div>
-                  ) : pack ? (
-                    <p className="muted">{d.discover.noPlaces}</p>
-                  ) : null}
-                  <div className="layers-row">
-                    <button
-                      type="button"
-                      className="layers-toggle"
-                      aria-expanded={layersOpen}
-                      onClick={() => setLayersOpen((v) => !v)}
-                    >
-                      {d.explore.layersToggle}
-                      {activeKindGroup ? ` · ${(d.explore.layers as Record<string, string>)[activeKindGroup] ?? activeKindGroup}` : ""}
-                      <span aria-hidden="true">{layersOpen ? "−" : "+"}</span>
-                    </button>
-                    {layersOpen ? (
-                      <div className="chat-suggestions">
-                        <button className="chip" data-selected={activeKindGroup === null} aria-pressed={activeKindGroup === null} onClick={() => setKindGroup(null)}>
-                          {d.explore.layers.all}
-                        </button>
-                        {["hotels", "pharmacy", "food", "worship", "shops", "health", "money", "heritage", "green"].map((group) =>
-                          KIND_GROUPS[group] ? (
-                            <button key={group} className="chip" data-selected={activeKindGroup === group} aria-pressed={activeKindGroup === group} onClick={() => setKindGroup(group)}>
-                              {(d.explore.layers as Record<string, string>)[group] ?? group}
-                            </button>
-                          ) : null
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                  {agent ? (
-                    <Suspense fallback={<p className="muted">{d.common.loading}</p>}>
-                      <ChatPanel
-                        d={d}
-                        agent={agent}
-                        greeting={d.explore.greeting}
-                        suggestions={[...d.explore.suggestions]}
-                        chatLabel={d.a11y.chatLabel}
-                        prefill={chatPrefill}
-                        prefillNonce={chatPrefillNonce}
-                        onTurnComplete={onTurnComplete}
-                      />
-                    </Suspense>
-                  ) : (
-                    <p className="muted">
-                      {agentError ?? d.common.loading}
-                    </p>
-                  )}
-                </>
-              ) : null}
-              {tab === "pulse" && pack ? <PulsePanel d={d} meta={meta ?? ({ id: pack.id, name: pack.name, lat: pack.center[0], lon: pack.center[1], radiusM: pack.radiusM, feeds: pack.feeds } as AreaMeta)} pack={pack} /> : null}
-              {tab === "brief" && pack ? <BriefPanel d={d} pack={pack} /> : null}
-              {tab === "memory" ? <MemoryPanel d={d} /> : null}
+          {/* The conversation stays mounted while the agent drives the map:
+              acting on a place must never erase the answer it gave. */}
+          {agent ? (
+            <div className="surface-agent" hidden={shell.surface !== "agent"}>
+              <Suspense fallback={<p className="muted">{d.common.loading}</p>}>
+                <ChatPanel
+                  d={d}
+                  agent={agent}
+                  greeting={d.explore.greeting}
+                  suggestions={[...d.explore.suggestions]}
+                  chatLabel={d.a11y.chatLabel}
+                  prefill={chatPrefill}
+                  prefillNonce={chatPrefillNonce}
+                  onTurnComplete={onTurnComplete}
+                  active={shell.surface === "agent"}
+                />
+              </Suspense>
             </div>
-          </aside>
-        </>
+          ) : shell.surface === "agent" ? (
+            <p className="muted">{agentError ?? d.common.loading}</p>
+          ) : null}
+        </MapShell>
+      ) : null}
+
+      {view === "explore" && shell.atmosphereOpen ? (
+        <div className="atmosphere-sheet" role="dialog" aria-modal="false" aria-label={d.shell.atmosphere}>
+          <div className="atmosphere-head">
+            <strong>{d.shell.atmosphere}</strong>
+            <button type="button" className="btn btn-ghost" onClick={() => shellDispatch({ type: "toggleAtmosphere", open: false })}>
+              {d.common.close}
+            </button>
+          </div>
+          <p className="muted">{d.explore.timeOfDayLocal} · {localTimeZone()}</p>
+          <input
+            className="tod-slider"
+            type="range"
+            min={0}
+            max={24}
+            step={0.1}
+            value={tod}
+            onChange={(e) => applyTod(Number(e.target.value))}
+            aria-label={d.explore.timeOfDayLabel}
+            aria-valuetext={d.a11y.timeOfDay.replace("{clock}", todClock(tod)).replace("{phase}", todLabel(d, nearestStop(tod)))}
+          />
+          <div className="tod-stops">
+            {TOD_STOPS.map((stop) => (
+              <button key={stop.key} data-active={nearestStop(tod).key === stop.key && Math.abs(tod - stop.hour) < 0.15} onClick={() => applyTod(stop.hour)}>
+                {todLabel(d, stop)}
+              </button>
+            ))}
+          </div>
+        </div>
       ) : null}
 
       {view === "form" || (showIntake && view === "explore") ? (

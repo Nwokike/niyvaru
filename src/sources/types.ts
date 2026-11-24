@@ -102,6 +102,9 @@ export interface Frame {
   heading: number;
   capturedAt: string;
   source: PhotoSource;
+  /** Source-supplied credit and licence, when the API exposes them. */
+  credit?: string;
+  license?: string;
 }
 
 export type PulseSource =
@@ -112,7 +115,19 @@ export type PulseSource =
   | "local"
   | "weather"
   | "prayer"
-  | "promotions";
+  | "promotions"
+  | "commons"
+  | "panoramax"
+  | "openaerialmap";
+
+/** External, source-hosted preview — linked only, never rehosted by the app. */
+export interface PulseImage {
+  url: string;
+  thumbUrl: string;
+  credit: string;
+  license?: string;
+  sourceUrl?: string;
+}
 
 export interface PulseItem {
   id: string;
@@ -123,6 +138,11 @@ export interface PulseItem {
   text?: string;
   url?: string;
   at?: string;
+  /** Only set when the source itself supplies a real location. */
+  lat?: number;
+  lon?: number;
+  /** Source-hosted preview image, linked and credited. */
+  image?: PulseImage;
   sponsor?: {
     name: string;
     note?: string;

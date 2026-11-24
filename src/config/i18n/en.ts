@@ -43,7 +43,25 @@ export const en = {
     },
   },
 
-  tabs: { explore: "Explore", pulse: "Happening", brief: "Story", memory: "Memory" },
+  tabs: { explore: "Explore", pulse: "Happening", brief: "Story", agent: "Agent", memory: "Memory" },
+
+  shell: {
+    expand: "Expand",
+    collapse: "Collapse",
+    search: "Search",
+    ask: "Ask",
+    you: "You",
+    live: "Live",
+    places: "{n} places",
+    happening: "{n} happening",
+    atmosphere: "Atmosphere",
+    yourTime: "Your {clock} · {phase}",
+    peek: "Minimized",
+    half: "Open",
+    full: "Full view",
+    status: "Current conditions and live status",
+    locate: "Locate me",
+  },
 
   discover: {
     previous: "Previous place",
@@ -86,6 +104,11 @@ export const en = {
       mapFailed: "Map failed: {error}",
       walkUnavailable: "Walk imagery is unavailable right now",
       noRoute: "No walking route was found for that destination",
+      noLocation: "Location is unavailable. Allow location access, or the walk starts from the area centre.",
+      locationDenied: "Location permission is blocked. Enable it for this site, or the walk starts from the area centre.",
+      locationUnavailable: "Your device could not report a location just now. The walk will start from the area centre.",
+      locationTimeout: "Getting your location took too long. Try again, or the walk starts from the area centre.",
+      locationUnsupported: "This browser does not offer location access. The walk starts from the area centre.",
     },
     timeOfDay: { dawn: "Dawn", day: "Day", golden: "Golden", night: "Night" },
     layers: { hotels: "Hotels", pharmacy: "Pharmacies", food: "Food", worship: "Worship", shops: "Shops", health: "Health", money: "Money", heritage: "Heritage", green: "Parks", all: "Everything" },
@@ -102,6 +125,7 @@ export const en = {
     follow: "Follow map",
     following: "Following map",
     fromCentre: "From area centre",
+    fromYou: "From your location",
     album: "Route photo album",
     exit: "Back to map",
     streetFrame: "Street photograph, heading {n}°",
@@ -114,8 +138,8 @@ export const en = {
   pulse: {
     title: "Right now in {area}",
     empty: "No live posts or local notes here yet. The weather, prayer times and anything source-backed will appear as soon as they arrive.",
-    share: "Share what you see…",
-    post: "Post",
+    share: "Private note on this device…",
+    post: "Save note",
     you: "You",
     localDevice: "You · this device",
     notShared: "Not shared",
@@ -124,7 +148,7 @@ export const en = {
     hoursAgo: "{n} h ago",
     daysAgo: "{n} d ago",
     prayerNames: "Fajr · Dhuhr · Asr · Maghrib · Isha",
-    sources: { gdelt: "News", bluesky: "Bluesky", mastodon: "Mastodon", wikipedia: "Wikipedia", local: "Travellers", weather: "Weather", prayer: "Prayer times", promotions: "Sponsored" },
+    sources: { gdelt: "News", bluesky: "Bluesky", mastodon: "Mastodon", wikipedia: "Wikipedia", commons: "Commons photos", panoramax: "Street imagery", openaerialmap: "Aerial imagery", local: "Travellers", weather: "Weather", prayer: "Prayer times", promotions: "Sponsored" },
   },
 
   brief: {
@@ -225,6 +249,13 @@ export const en = {
     places: "Places",
     dismiss: "Dismiss",
     kmAway: "{d} m away",
+  },
+
+  place: {
+    takeaway: "Takeaway",
+    outdoorSeating: "Outdoor seating",
+    noPhoto: "No photograph available for this place yet",
+    ask: "Ask about this place",
   },
 
   a11y: {

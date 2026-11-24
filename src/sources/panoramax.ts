@@ -5,7 +5,7 @@
  */
 import { endpoints } from "../config/endpoints";
 import { cached } from "./cache";
-import type { Bbox, Frame, Photo } from "./types";
+import type { Bbox, Frame, Photo, PulseItem } from "./types";
 
 interface PanoramaxItem {
   id: string;
@@ -53,6 +53,37 @@ export async function framesInBbox(bbox: Bbox, limit = 500, signal?: AbortSignal
       }))
       .filter((f) => f.url !== "");
   });
+}
+
+/**
+ * Street imagery near the area. Captures inside the recent window lead and are
+ * dated; a city whose newest pass is older still shows that imagery, undated,
+ * rather than an empty feed.
+ */
+export async function panoramaxRecentPulse(bbox: Bbox, signal?: AbortSignal): Promise<PulseItem[]> {
+  const frames = await framesInBbox(bbox, 200, signal);
+  const cutoff = Date.now() - 90 * 24 * 3600_000;
+  const dated = frames
+    .filter((f) => f.capturedAt)
+    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+  const fresh = dated.filter((f) => new Date(f.capturedAt).getTime() >= cutoff);
+  const chosen = fresh.length ? fresh : dated;
+  return chosen.slice(0, 8).map<PulseItem>((f) => ({
+    // Frame ids are already namespaced by framesInBbox.
+    id: f.id,
+    source: "panoramax",
+    kind: "organic",
+    title: fresh.length ? "Recently captured street imagery near this area" : "Street imagery near this area",
+    at: fresh.length ? f.capturedAt : undefined,
+    lat: f.lat,
+    lon: f.lon,
+    image: {
+      url: f.url,
+      thumbUrl: f.thumbUrl,
+      credit: f.credit ?? "Panoramax contributors",
+      license: f.license ?? "CC-BY-SA-4.0",
+    },
+  }));
 }
 
 /** Photos usable on a place card (same catalog, matched by proximity in the assembler). */

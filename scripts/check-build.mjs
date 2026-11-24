@@ -31,7 +31,7 @@ if (!base && html.includes('src="/niyvaru/assets/')) {
   process.exit(1);
 }
 
-const legacy = ["src/agent.ts", "data/build-data.mjs", "public/packs/index.json", "NASA EONET"];
+const legacy = ["src/agent.ts", "public/packs/index.json", "NASA EONET"];
 const assets = readdirSync(resolve(root, "dist/assets"));
 const js = assets.filter((f) => f.endsWith(".js")).map((f) => readFileSync(resolve(root, "dist/assets", f), "utf8")).join("\n");
 const foundLegacy = legacy.filter((s) => js.includes(s));

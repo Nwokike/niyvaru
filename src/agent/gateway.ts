@@ -1,11 +1,6 @@
 /**
- * Kiri Gateway adapter — the free inference path.
- *
- * The gateway speaks its family contract (POST /chat with task_type);
- * this adapter lets the AI SDK talk OpenAI wire format transparently.
- * Authorization is set by the SDK from apiKey (the family key, like
- * Akili ships it). Model selection and free-provider fallbacks stay
- * inside the gateway.
+ * Free inference adapter. The SDK sees an OpenAI-compatible provider; this
+ * file only normalizes the request path and handles failed responses.
  */
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { endpoints } from "../config/endpoints";

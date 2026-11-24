@@ -66,16 +66,29 @@ async function nominatim(query: string, signal?: AbortSignal): Promise<GeocodeRe
   });
 }
 
+/** Photon repeats the same feature under several osm ids; collapse by place. */
+function dedupe(results: GeocodeResult[]): GeocodeResult[] {
+  const seen = new Set<string>();
+  return results.filter((r) => {
+    // Four decimals (~11 m): Photon repeats the same feature under several osm
+    // ids, but two genuinely different branches of the same name stay separate.
+    const key = `${r.name.toLowerCase()}|${r.lat.toFixed(4)}|${r.lon.toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export async function searchCities(query: string, signal?: AbortSignal): Promise<GeocodeResult[]> {
   const trimmed = clean(query);
   if (trimmed.length < 2) return [];
   return cached(`geocode:${trimmed.toLowerCase()}`, 24 * 3600_000, async () => {
     try {
-      const results = await photon(trimmed, signal);
+      const results = dedupe(await photon(trimmed, signal));
       if (results.length) return results;
     } catch (e) {
       if (signal?.aborted) throw e;
     }
-    return nominatim(trimmed, signal);
+    return dedupe(await nominatim(trimmed, signal));
   });
 }

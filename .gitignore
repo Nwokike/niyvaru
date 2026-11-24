@@ -7,3 +7,4 @@ worker/.wrangler/
 .DS_Store
 .env
 .env.local
+.zcode/

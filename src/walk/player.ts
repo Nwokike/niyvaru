@@ -72,6 +72,7 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
 
   const media = document.createElement("div");
   media.className = "walk-media";
+  media.style.display = frameCount < 2 && !reducedMotion ? "none" : "";
   const layerA = document.createElement("img");
   const layerB = document.createElement("img");
   layerA.alt = "";

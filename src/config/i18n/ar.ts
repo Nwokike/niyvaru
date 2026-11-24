@@ -45,7 +45,25 @@ export const ar: Dictionary = {
     },
   },
 
-  tabs: { explore: "استكشف", pulse: "المستجدات", brief: "الحكاية", memory: "الذاكرة" },
+  tabs: { explore: "استكشف", pulse: "المستجدات", brief: "الحكاية", agent: "الوكيل", memory: "الذاكرة" },
+
+  shell: {
+    expand: "توسيع",
+    collapse: "تصغير",
+    search: "بحث",
+    ask: "اسأل",
+    you: "أنت",
+    live: "مباشر",
+    places: "{n} أماكن",
+    happening: "{n} مستجدات",
+    atmosphere: "الأجواء",
+    yourTime: "وقتك {clock} · {phase}",
+    peek: "مصغّرة",
+    half: "مفتوحة",
+    full: "عرض كامل",
+    status: "الأوضاع الحالية والحالة المباشرة",
+    locate: "حدد موقعي",
+  },
 
   discover: {
     previous: "المكان السابق",
@@ -88,6 +106,11 @@ export const ar: Dictionary = {
       mapFailed: "فشلت الخريطة: {error}",
       walkUnavailable: "صور الجولة غير متاحة حالياً",
       noRoute: "لم يتم العثور على مسار مشي إلى هذا المكان",
+      noLocation: "الموقع غير متاح. اسمح بالوصول إلى الموقع، وإلا ستبدأ الجولة من مركز المنطقة.",
+      locationDenied: "إذن الوصول إلى الموقع محظور. فعّله لهذا الموقع، وإلا ستبدأ الجولة من مركز المنطقة.",
+      locationUnavailable: "تعذّر على جهازك الإبلاغ عن موقعك الآن. ستبدأ الجولة من مركز المنطقة.",
+      locationTimeout: "استغرق تحديد موقعك وقتاً طويلاً. حاول مجدداً، وإلا ستبدأ الجولة من مركز المنطقة.",
+      locationUnsupported: "هذا المتصفح لا يوفّر الوصول إلى الموقع. ستبدأ الجولة من مركز المنطقة.",
     },
     timeOfDay: { dawn: "الفجر", day: "النهار", golden: "الساعة الذهبية", night: "الليل" },
     layers: { hotels: "الفنادق", pharmacy: "الصيدليات", food: "المطاعم", worship: "المساجد", shops: "المتاجر", health: "الصحة", money: "البنوك", heritage: "التراث", green: "الحدائق", all: "الكل" },
@@ -104,6 +127,7 @@ export const ar: Dictionary = {
     follow: "اتبع الخريطة",
     following: "الخريطة مُتبَعة",
     fromCentre: "من مركز المنطقة",
+    fromYou: "من موقعك",
     album: "ألبوم صور المسار",
     exit: "العودة إلى الخريطة",
     streetFrame: "صورة للشارع، اتجاه {n}°",
@@ -116,8 +140,8 @@ export const ar: Dictionary = {
   pulse: {
     title: "الآن في {area}",
     empty: "لا توجد منشورات محلية بعد. سيظهر الطقس وأوقات الصلاة وأي معلومات موثقة من مصادرها فور وصولها.",
-    share: "شارك ما تراه…",
-    post: "انشر",
+    share: "ملاحظة خاصة على هذا الجهاز…",
+    post: "احفظ الملاحظة",
     you: "أنت",
     localDevice: "أنت · هذا الجهاز",
     notShared: "غير مشترك",
@@ -126,7 +150,7 @@ export const ar: Dictionary = {
     hoursAgo: "قبل {n} ساعة",
     daysAgo: "قبل {n} يوم",
     prayerNames: "الفجر · الظهر · العصر · المغرب · العشاء",
-    sources: { gdelt: "الأخبار", bluesky: "بلوسكي", mastodon: "ماستودون", wikipedia: "ويكيبيديا", local: "المسافرون", weather: "الطقس", prayer: "أوقات الصلاة", promotions: "إعلان ممول" },
+    sources: { gdelt: "الأخبار", bluesky: "بلوسكي", mastodon: "ماستودون", wikipedia: "ويكيبيديا", commons: "صور كومونز", panoramax: "صور الشوارع", openaerialmap: "صور جوية", local: "المسافرون", weather: "الطقس", prayer: "أوقات الصلاة", promotions: "إعلان ممول" },
   },
 
   brief: {
@@ -227,6 +251,13 @@ export const ar: Dictionary = {
     places: "أماكن",
     dismiss: "إغلاق",
     kmAway: "على بُعد {d} م",
+  },
+
+  place: {
+    takeaway: "يمكن أخذه للخارج",
+    outdoorSeating: "جلوس في الهواء الطلق",
+    noPhoto: "لا توجد صورة متاحة لهذا المكان بعد",
+    ask: "اسأل عن هذا المكان",
   },
 
   a11y: {

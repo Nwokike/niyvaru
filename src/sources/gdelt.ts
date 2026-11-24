@@ -1,7 +1,7 @@
 /**
  * GDELT DOC 2.0 — worldwide news geolocated by mention, "100% free and open",
- * no key. Some deployments lack CORS; the adapter fails softly and the
- * optional Worker mode (config) can proxy it.
+ * no key and CORS-open. The adapter fails softly so optional news never
+ * blocks the rest of the assembled area.
  */
 import { endpoints } from "../config/endpoints";
 import { cached } from "./cache";
@@ -13,7 +13,7 @@ export async function newsForArea(
   signal?: AbortSignal
 ): Promise<PulseItem[]> {
   const q = query ?? areaName;
-  return cached(`gdelt:${q}`, 15 * 60_000, async () => {
+  return cached(`gdelt-v2:${q}`, 15 * 60_000, async () => {
     const params = new URLSearchParams({
       query: `${q} sourcelang:eng`,
       mode: "ArtList",
@@ -39,6 +39,14 @@ export async function newsForArea(
       title: a.title,
       url: a.url,
       at: parseGdeltDate(a.seendate),
+      image: a.socialimage
+        ? {
+            url: a.socialimage,
+            thumbUrl: a.socialimage,
+            credit: `${a.domain ?? "News publisher"} publisher image`,
+            sourceUrl: a.url,
+          }
+        : undefined,
     }));
   });
 }

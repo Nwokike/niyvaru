@@ -19,11 +19,11 @@ import {
   showRoute,
   focusPlace,
   clearFocusMarker,
+  showUserLocation,
+  clearUserLocation,
 } from "./pois";
 import { debugLog, debugTime } from "../debug";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "../sources/types";
-
-let protocolAdded = false;
 
 export interface MapApi {
   map: MLMap;
@@ -34,6 +34,9 @@ export interface MapApi {
   filterKinds(kinds: string[] | null): void;
   /** Continuous hour 0–24 — relights the whole city. */
   setHour(hour: number): void;
+  /** Reserve visible map space above the surface dock. */
+  setViewportInset(bottom: number): void;
+  setUserLocation(lat: number, lon: number): void;
   labelLanguage(lang: string): void;
   onPlaceClick(cb: (place: Place) => void, lookup: (id: string) => Place | undefined): void;
   destroy(): void;
@@ -56,9 +59,9 @@ export async function initMap(
   debugLog("map", "initMap start", { area: meta.id });
   const low = deviceLowPower();
   const width = container.clientWidth || window.innerWidth;
-  const placeLimit = low ? 600 : 1200;
-
-  void protocolAdded;
+  // Every rendered dot is browsable; this is only a drawing budget for the
+  // cloud layer, never a cut on what the dossier can reach.
+  const placeLimit = low ? 1200 : 3000;
 
   debugLog("map", "constructing Map (positron + regrade)");
   // Use the returned object directly — setup() mutates its roles array on
@@ -127,7 +130,17 @@ export async function initMap(
   debugLog("map", "style ready");
   signal?.throwIfAborted();
 
-  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }), "top-left");
+  // MapLibre disables the zoom buttons at the min/max limits itself; styles.css
+  // paints that disabled state ash-grey like the reference map.
+  map.addControl(
+    new maplibregl.NavigationControl({
+      showZoom: true,
+      showCompass: true,
+      visualizePitch: true,
+      visualizeRoll: true,
+    }),
+    "bottom-right"
+  );
 
   mountedEpoch = regraded.styleEpoch;
   restoreCustomLayers();
@@ -200,6 +213,13 @@ export async function initMap(
       setKindFilter(map, kinds);
     },
     setHour,
+    setViewportInset(bottom: number) {
+      map.setPadding({ top: 0, right: 0, bottom: Math.max(0, bottom), left: 0 });
+    },
+    setUserLocation(lat: number, lon: number) {
+      showUserLocation(map, lat, lon);
+      map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 16), duration: 900 });
+    },
     labelLanguage(lang: string) {
       lastLang = lang;
       setLabelLanguage(map, lang);
@@ -215,6 +235,7 @@ export async function initMap(
     },
     destroy() {
       clearFocusMarker();
+      clearUserLocation();
       cancelAnimationFrame(raf);
       const globals = window as unknown as { __niyvaruMap?: MLMap; __niyvaruRegrade?: RegradedStyle };
       if (globals.__niyvaruMap === map) delete globals.__niyvaruMap;
@@ -228,5 +249,3 @@ export async function initMap(
     throw error;
   }
 }
-
-void protocolAdded;

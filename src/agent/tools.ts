@@ -22,6 +22,8 @@ export interface AgentUi {
   showRoute(route: WalkRoute | null, fit?: boolean): void;
   startWalk(route: WalkRoute): void;
   setTimeOfDay(phase: TimePhase): void;
+  openSurface(surface: "explore" | "pulse" | "brief" | "agent" | "memory", detent?: "peek" | "half" | "full"): void;
+  setSurfaceDetent(detent: "peek" | "half" | "full"): void;
   clearView(): void;
 }
 
@@ -30,8 +32,6 @@ export interface AgentContext {
   ui: AgentUi;
   locale: () => "en" | "ar";
 }
-
-const PHASE_T: Record<TimePhase, number> = { dawn: 0, day: 1 / 3, golden: 2 / 3, night: 1 };
 
 function compactPlace(p: Place): Record<string, unknown> {
   return {
@@ -218,7 +218,8 @@ export function createAgentTools(ctx: AgentContext) {
     }),
 
     focus_place: tool({
-      description: "Move the traveller's view to a place and pin it.",
+      description:
+        "Pin a place on the live map and fly the camera to it. Call whenever the traveller asks to see, show, find or pin a place, or when you recommend a specific one. Use ids from AREA DATA or search results. No confirmation needed; call again to move the pin.",
       inputSchema: z.object({ placeId: z.string() }),
       execute: async ({ placeId }) => {
         const pack = packNow();
@@ -226,6 +227,7 @@ export function createAgentTools(ctx: AgentContext) {
         if (!place) return { error: `unknown place id ${placeId}` };
         ctx.ui.openPlaceCard(place);
         ctx.ui.focusPlace(place);
+        ctx.ui.openSurface("explore", "half");
         return { focused: place.nameEn ?? place.name };
       },
     }),
@@ -319,6 +321,7 @@ export function createAgentTools(ctx: AgentContext) {
       inputSchema: z.object({}),
       execute: async () => {
         // Live data must never be served from the per-session dedupe cache.
+        ctx.ui.openSurface("pulse", "half");
         const pack = packNow();
         return {
           prayer: pack.prayer[0] ?? null,

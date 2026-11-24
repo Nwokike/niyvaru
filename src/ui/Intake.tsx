@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dictionary } from "../config/i18n";
 import { writeFile } from "../memory/store";
+import { clearDraft, loadIntakeState, saveDraft, type IntakeFormState } from "../memory/intakeState";
 import { searchAreas } from "../area/store";
 import { BASE_URL } from "../config/endpoints";
 import type { AreaMeta } from "../sources/types";
@@ -28,6 +29,7 @@ function travellerMarkdown(input: {
   elderly: boolean;
   wheelchair: boolean;
   interests: string[];
+  interestKeys: string[];
   language: string;
 }): string {
   const lines = ["# Traveller", ""];
@@ -42,11 +44,13 @@ function travellerMarkdown(input: {
   else lines.push("- proximity: shuttle-friendly is acceptable");
   lines.push(`- breakfast: ${input.breakfast}`);
   if (input.interests.length) lines.push(`- interests: ${input.interests.join(", ")}`);
+  if (input.interestKeys.length) lines.push(`- interest keys: ${input.interestKeys.join(",")}`);
   lines.push("");
   return lines.join("\n");
 }
 
 function tripMarkdown(input: {
+  areaId: string;
   areaName: string;
   country?: string;
   checkin: string;
@@ -54,6 +58,7 @@ function tripMarkdown(input: {
   flexible: boolean;
 }): string {
   const lines = ["# Trip", ""];
+  lines.push(`- area id: ${input.areaId}`);
   lines.push(`- area: ${input.areaName}${input.country ? `, ${input.country}` : ""}`);
   if (input.checkin || input.checkout) {
     lines.push(`- dates: ${input.checkin || "?"} → ${input.checkout || "?"}${input.flexible ? " (flexible ±2 days)" : ""}`);
@@ -132,12 +137,45 @@ export function Intake({
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<AreaMeta[] | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   onCloseRef.current = onClose;
 
   const selectedArea = areas.find((a) => a.id === stay) ?? searchResults?.find((a) => a.id === stay) ?? area;
+
+  useEffect(() => {
+    let alive = true;
+    void loadIntakeState().then((saved) => {
+      if (!alive) return;
+      if (saved.stay) setStay(saved.stay);
+      if (saved.checkin) setCheckin(saved.checkin);
+      if (saved.checkout) setCheckout(saved.checkout);
+      if (saved.flexible != null) setFlexible(saved.flexible);
+      if (saved.adults != null) setAdults(saved.adults);
+      if (saved.children != null) setChildren(saved.children);
+      if (saved.rooms != null) setRooms(saved.rooms);
+      if (saved.standard) setStandard(saved.standard);
+      if (saved.proximity) setProximity(saved.proximity);
+      if (saved.breakfast) setBreakfast(saved.breakfast);
+      if (saved.elderly != null) setElderly(saved.elderly);
+      if (saved.wheelchair != null) setWheelchair(saved.wheelchair);
+      if (saved.interests) setInterests(saved.interests);
+      if (saved.name) setName(saved.name);
+      setHydrated(true);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const state: IntakeFormState = {
+      stay, checkin, checkout, flexible, adults, children, rooms,
+      standard, proximity, breakfast, elderly, wheelchair, interests, name,
+    };
+    saveDraft(state);
+  }, [hydrated, stay, checkin, checkout, flexible, adults, children, rooms, standard, proximity, breakfast, elderly, wheelchair, interests, name]);
 
   useEffect(() => {
     if (homepage) return;
@@ -199,11 +237,16 @@ export function Intake({
     try {
       await writeFile(
         "/memories/traveller.md",
-        travellerMarkdown({ name, adults, children, rooms, standard, proximity, breakfast, elderly, wheelchair, interests, language })
+        travellerMarkdown({
+          name, adults, children, rooms, standard, proximity, breakfast, elderly, wheelchair, language,
+          interests: interests.map((key) => d.intake.interestOptions[key as keyof typeof d.intake.interestOptions] ?? key),
+          interestKeys: interests,
+        })
       );
       await writeFile(
         "/memories/trip.md",
         tripMarkdown({
+          areaId: current.id,
           areaName: current.name,
           country: current.country,
           checkin,
@@ -212,6 +255,7 @@ export function Intake({
         })
       );
       setSaveError("");
+      clearDraft();
       onClose(current);
     } catch {
       setSaveError(d.intake.saveError);
@@ -433,14 +477,14 @@ export function Intake({
       <fieldset className="request-group">
         <legend>{d.intake.interests}</legend>
         <div className="request-chips">
-          {Object.values(d.intake.interestOptions).map((label) => (
+          {Object.entries(d.intake.interestOptions).map(([key, label]) => (
             <button
-              key={label}
+              key={key}
               type="button"
               className="chip"
-              data-selected={interests.includes(label)}
-              aria-pressed={interests.includes(label)}
-              onClick={() => setInterests((list) => (list.includes(label) ? list.filter((x) => x !== label) : [...list, label]))}
+              data-selected={interests.includes(key)}
+              aria-pressed={interests.includes(key)}
+              onClick={() => setInterests((list) => (list.includes(key) ? list.filter((x) => x !== key) : [...list, key]))}
             >
               {label}
             </button>

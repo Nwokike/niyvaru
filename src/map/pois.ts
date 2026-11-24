@@ -197,3 +197,22 @@ export function clearFocusMarker(): void {
   marker?.remove();
   marker = null;
 }
+
+let userMarker: maplibregl.Marker | null = null;
+
+/** Device location, only shown after the traveller grants permission. */
+export function showUserLocation(map: MLMap, lat: number, lon: number): void {
+  userMarker?.remove();
+  const el = document.createElement("div");
+  el.className = "user-location-marker";
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", "You are here");
+  userMarker = new maplibregl.Marker({ element: el, anchor: "center" })
+    .setLngLat([lon, lat])
+    .addTo(map);
+}
+
+export function clearUserLocation(): void {
+  userMarker?.remove();
+  userMarker = null;
+}

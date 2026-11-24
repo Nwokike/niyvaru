@@ -30,7 +30,7 @@ export function PlaceCard({
         </button>
       </div>
       <div className="place-meta">
-        <span>{place.kind}</span>
+        <span>{d.explore.layers[place.kind as keyof typeof d.explore.layers] ?? place.kind}</span>
         {place.distanceM != null ? <span>{d.common.kmAway.replace("{d}", String(place.distanceM))}</span> : null}
         <span>
           {status.state === "open"
@@ -40,6 +40,11 @@ export function PlaceCard({
               : d.common.hoursUnknown}
         </span>
         {place.tags.wheelchair === "yes" ? <span>{d.common.wheelchairYes}</span> : null}
+        {place.tags.openingHours ? <span dir="ltr">{place.tags.openingHours}</span> : null}
+        {place.tags.cuisine ? <span>{place.tags.cuisine}</span> : null}
+        {place.tags.takeaway ? <span>{d.place.takeaway}</span> : null}
+        {place.tags.outdoorSeating ? <span>{d.place.outdoorSeating}</span> : null}
+        {place.tags.internet ? <span>{place.tags.internet}</span> : null}
       </div>
       {place.tags.phone || place.tags.website || place.tags.addrStreet ? (
         <div className="place-meta">

@@ -31,7 +31,7 @@ export function DiscoverDossier({
   onClose: () => void;
 }) {
   const total = places.length;
-  const place = places[currentIndex];
+  const place = places[currentIndex] ?? places[0];
   const rtl = d.dir === "rtl";
   const [expanded, setExpanded] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
@@ -79,7 +79,9 @@ export function DiscoverDossier({
 
   const status = place.tags.openingHours ? openingHoursAt(place.tags.openingHours) : { state: "unknown" as const };
   const name = place.nameEn ?? place.name;
-  const photos = place.photos.slice(0, 3);
+  // Every photograph the assembler attached is shown; the pack already bounds
+  // galleries per place, so there is no arbitrary showcase cut here.
+  const photos = place.photos;
   const mainPhoto = photos[0];
   const website = safeWebsiteUrl(place.tags.website);
   const websiteHost = safeWebsiteHost(place.tags.website);
@@ -195,6 +197,11 @@ export function DiscoverDossier({
               : d.common.hoursUnknown}
         </span>
         {place.tags.wheelchair === "yes" ? <span>{d.common.wheelchairYes}</span> : null}
+        {place.tags.openingHours ? <span dir="ltr">{place.tags.openingHours}</span> : null}
+        {place.tags.cuisine ? <span>{place.tags.cuisine}</span> : null}
+        {place.tags.takeaway ? <span>{d.place.takeaway}</span> : null}
+        {place.tags.outdoorSeating ? <span>{d.place.outdoorSeating}</span> : null}
+        {place.tags.internet ? <span>{place.tags.internet}</span> : null}
       </div>
 
       {place.story ? (
