@@ -124,7 +124,10 @@ function deviceLowPower(): boolean {
   const nav = navigator as Navigator & { deviceMemory?: number };
   const memoryGb = typeof nav.deviceMemory === "number" ? nav.deviceMemory : 8;
   const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-  return coarsePointer && memoryGb < 6;
+  // Phones commonly report 4 GB, so "<6" silently turned every phone into a
+  // flat map. Only genuinely small devices lose the expensive layers, and
+  // buildings themselves stay on (terrain is what gets dropped).
+  return coarsePointer && memoryGb <= 3;
 }
 
 export async function initMap(

@@ -32,8 +32,27 @@ window.addEventListener("vite:preloadError", () => {
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     const base = import.meta.env.BASE_URL ?? "/";
-    navigator.serviceWorker.register(`${base}sw.js`).catch(() => {
-      /* offline shell is an enhancement */
-    });
+    navigator.serviceWorker
+      .register(`${base}sw.js`, { updateViaCache: "none" })
+      .then((registration) => {
+        // A deployed update must reach the traveller on this visit, not the
+        // visit after next: when the new worker takes control, reload once.
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          worker?.addEventListener("statechange", () => {
+            if (worker.state !== "activated") return;
+            try {
+              if (sessionStorage.getItem("niyvaru.swReloaded") === "1") return;
+              sessionStorage.setItem("niyvaru.swReloaded", "1");
+            } catch {
+              /* private mode */
+            }
+            window.location.reload();
+          });
+        });
+      })
+      .catch(() => {
+        /* offline shell is an enhancement */
+      });
   });
 }

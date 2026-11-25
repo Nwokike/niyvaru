@@ -4,7 +4,7 @@
  * map tiles carry their own HTTP caching. This service worker only precaches
  * the shell and serves it when the network is gone.
  */
-const CACHE = "niyvaru-shell-v3";
+const CACHE = "niyvaru-shell-v5";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./brand/favicon.ico", "./areas.json"];
 
 self.addEventListener("install", (event) => {

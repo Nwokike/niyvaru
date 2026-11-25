@@ -136,34 +136,10 @@ function setup(regraded: RegradedStyle): void {
   }
   debugLog("map", `roles assigned: ${regraded.roles.length} of ${style.layers?.length ?? 0} layers painted`);
 
-  // Low-power mobile devices keep the flat brand palette and skip the
-  // expensive DEM + extrusion work; the map is still fully readable.
-  if (lowPower) {
-    map.setTerrain(null);
-    return;
-  }
-
-  // Terrain + hillshade: two sources of the same AWS Terrarium tiles
-  // (MapLibre advises against sharing one source between both).
-  if (!map.getSource(TERRAIN_SOURCE)) {
-    map.addSource(TERRAIN_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
-  }
-  if (!map.getSource(HILLSHADE_SOURCE)) {
-    map.addSource(HILLSHADE_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
-  }
+  // Our own extrusion — the default building fill was hidden above. Buildings
+  // are the product's signature 3D; they stay on every device that can render
+  // WebGL2. Only the DEM stack (terrain + hillshade) is quality-gated below.
   const firstLineId = style.layers?.find((l) => l.type === "line")?.id;
-  if (!map.getLayer(HILLSHADE_SOURCE)) {
-    map.addLayer(
-      {
-        id: HILLSHADE_SOURCE,
-        type: "hillshade",
-        source: HILLSHADE_SOURCE,
-        paint: { "hillshade-exaggeration": 0.55, "hillshade-illumination-anchor": "map" },
-      },
-      firstLineId
-    );
-  }
-  // Our own extrusion — the default building fill was hidden above.
   if (vectorSource && !map.getLayer(BUILDINGS_LAYER)) {
     map.addLayer(
       {
@@ -179,6 +155,33 @@ function setup(regraded: RegradedStyle): void {
           "fill-extrusion-opacity": 0.94,
           "fill-extrusion-vertical-gradient": true,
         },
+      },
+      firstLineId
+    );
+  }
+
+  // Low-power mobile devices keep the flat brand palette and skip the
+  // expensive DEM work; the map is still readable and still has buildings.
+  if (lowPower) {
+    map.setTerrain(null);
+    return;
+  }
+
+  // Terrain + hillshade: two sources of the same AWS Terrarium tiles
+  // (MapLibre advises against sharing one source between both).
+  if (!map.getSource(TERRAIN_SOURCE)) {
+    map.addSource(TERRAIN_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
+  }
+  if (!map.getSource(HILLSHADE_SOURCE)) {
+    map.addSource(HILLSHADE_SOURCE, { type: "raster-dem", tiles: [endpoints.terrain.terrariumTiles], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
+  }
+  if (!map.getLayer(HILLSHADE_SOURCE)) {
+    map.addLayer(
+      {
+        id: HILLSHADE_SOURCE,
+        type: "hillshade",
+        source: HILLSHADE_SOURCE,
+        paint: { "hillshade-exaggeration": 0.55, "hillshade-illumination-anchor": "map" },
       },
       firstLineId
     );
