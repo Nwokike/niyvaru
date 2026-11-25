@@ -25,34 +25,39 @@ import {
 import { debugLog, debugTime } from "../debug";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "../sources/types";
 
-/** The cinematic view the app opens with; the compass toggles back to it. */
-const SHOWCASE = { pitch: 55, bearing: -15 };
+/** The cinematic pitch the app opens with. */
+const SHOWCASE_PITCH = 55;
 
 const COMPASS_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
   <circle cx="12" cy="12" r="9" fill="none" stroke="#96682f" stroke-width="1.6"/>
   <path d="M12 5.5 15 15l-3-2.2L9 15Z" fill="#96682f"/>
 </svg>`;
 
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 /**
- * Two-state orientation control. Stock MapLibre compasses only reset to
- * north-up and flatten the map, after which the app's 3D view is lost.
- * This one toggles: showcase view ⇄ north-up, both recoverable.
+ * Compass: north-up reset, bearing only. The icon never changes — it is a
+ * compass, like Google Maps, not a mode switch.
  */
-class OrientationControl implements maplibregl.IControl {
+class CompassControl implements maplibregl.IControl {
   private map?: MLMap;
   private button?: HTMLButtonElement;
-  private readonly onClick = (): void => this.toggle();
-  private readonly sync = (): void => this.syncState();
+  private readonly onClick = (): void => {
+    const map = this.map;
+    if (!map) return;
+    map.stop();
+    if (prefersReducedMotion()) map.jumpTo({ bearing: 0 });
+    else map.easeTo({ bearing: 0, duration: 600 });
+  };
 
-  constructor(
-    private readonly showcase: { pitch: number; bearing: number },
-    private readonly label = "Toggle 3D view"
-  ) {}
+  constructor(private readonly label = "Reset to north") {}
 
   onAdd(map: MLMap): HTMLElement {
     this.map = map;
     const container = document.createElement("div");
-    container.className = "maplibregl-ctrl maplibregl-ctrl-group niyvaru-orientation";
+    container.className = "maplibregl-ctrl maplibregl-ctrl-group niyvaru-compass";
     const button = document.createElement("button");
     button.type = "button";
     button.title = this.label;
@@ -61,8 +66,56 @@ class OrientationControl implements maplibregl.IControl {
     button.addEventListener("click", this.onClick);
     container.appendChild(button);
     this.button = button;
+    return container;
+  }
+
+  onRemove(): void {
+    this.button?.removeEventListener("click", this.onClick);
+    this.map = undefined;
+    this.button = undefined;
+  }
+}
+
+/**
+ * 3D: tilt toggle, pitch only. The "3D" label is the state (pressed = tilted),
+ * exactly like Google's 3D button; the icon never morphs into a compass.
+ */
+class TiltControl implements maplibregl.IControl {
+  private map?: MLMap;
+  private button?: HTMLButtonElement;
+  private readonly onClick = (): void => {
+    const map = this.map;
+    if (!map) return;
+    const tilted = map.getPitch() > 10;
+    map.stop();
+    const next = { pitch: tilted ? 0 : SHOWCASE_PITCH };
+    if (prefersReducedMotion()) map.jumpTo(next);
+    else map.easeTo({ ...next, duration: 600 });
+    this.sync();
+  };
+  private readonly sync = (): void => {
+    if (!this.button || !this.map) return;
+    const tilted = this.map.getPitch() > 10;
+    this.button.setAttribute("aria-pressed", String(tilted));
+    this.button.dataset.mode = tilted ? "3d" : "flat";
+  };
+
+  constructor(private readonly label = "Toggle 3D view") {}
+
+  onAdd(map: MLMap): HTMLElement {
+    this.map = map;
+    const container = document.createElement("div");
+    container.className = "maplibregl-ctrl maplibregl-ctrl-group niyvaru-tilt";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = this.label;
+    button.setAttribute("aria-label", this.label);
+    button.textContent = "3D";
+    button.addEventListener("click", this.onClick);
+    container.appendChild(button);
+    this.button = button;
     map.on("move", this.sync);
-    this.syncState();
+    this.sync();
     return container;
   }
 
@@ -71,35 +124,6 @@ class OrientationControl implements maplibregl.IControl {
     this.map?.off("move", this.sync);
     this.map = undefined;
     this.button = undefined;
-  }
-
-  /** Visible state: `3d` when the showcase view is active, `flat` otherwise. */
-  private syncState(): void {
-    if (!this.button) return;
-    const showcase = this.atShowcase();
-    this.button.dataset.mode = showcase ? "3d" : "flat";
-    this.button.setAttribute("aria-pressed", String(showcase));
-  }
-
-  private atShowcase(): boolean {
-    const map = this.map;
-    if (!map) return false;
-    // Bearings are 0–360 (showcase −15 arrives as 345); compare the short arc.
-    const bearingDelta = Math.abs(((map.getBearing() - this.showcase.bearing + 540) % 360) - 180);
-    return Math.abs(map.getPitch() - this.showcase.pitch) < 3 && bearingDelta < 3;
-  }
-
-  private toggle(): void {
-    const map = this.map;
-    if (!map) return;
-    const next = this.atShowcase()
-      ? { pitch: 0, bearing: 0 }
-      : { pitch: this.showcase.pitch, bearing: this.showcase.bearing };
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    map.stop();
-    if (reduced) map.jumpTo(next);
-    else map.easeTo({ ...next, duration: 650 });
-    this.syncState();
   }
 }
 
@@ -135,7 +159,7 @@ export async function initMap(
   meta: AreaMeta,
   signal?: AbortSignal,
   initialHour = 18.5,
-  labels?: { orientation?: string }
+  labels?: { compass?: string; tilt?: string }
 ): Promise<MapApi> {
   const done = debugTime("map", "initMap total");
   debugLog("map", "initMap start", { area: meta.id });
@@ -231,7 +255,14 @@ export async function initMap(
     }),
     "bottom-right"
   );
-  map.addControl(new OrientationControl(SHOWCASE, labels?.orientation), "bottom-right");
+  map.addControl(new CompassControl(labels?.compass), "bottom-right");
+  map.addControl(new TiltControl(labels?.tilt), "bottom-right");
+  // Attribution is collapsed by default and opens only on tap of the ⓘ.
+  map.once("idle", () => {
+    document
+      .querySelectorAll(".maplibregl-ctrl-attrib.maplibregl-compact-show")
+      .forEach((el) => el.classList.remove("maplibregl-compact-show"));
+  });
 
   mountedEpoch = regraded.styleEpoch;
   restoreCustomLayers();

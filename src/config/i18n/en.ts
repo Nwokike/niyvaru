@@ -98,6 +98,7 @@ export const en = {
     timeOfDayLabel: "Time of day",
     timeOfDayLocal: "Follows your device’s local clock",
     toggle3d: "Toggle 3D view",
+    compass: "Reset to north",
     mapPlacesLabel: "Places on the map",
     keyboardHelp: "Use the left and right arrow keys to step through places. Press Escape to close a place.",
     walkFromCenter: "Starting from the area centre",

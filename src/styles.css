@@ -1374,12 +1374,9 @@ button {
 .maplibregl-ctrl-attrib.maplibregl-compact .maplibregl-ctrl-attrib-inner {
   display: none;
 }
-/* Tapping the ⓘ must actually reveal the attribution on touch screens. */
+/* Only an explicit tap of the ⓘ opens attribution; it starts closed and
+   never opens on hover. */
 .maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-inner {
-  display: block;
-}
-.maplibregl-ctrl-attrib.maplibregl-compact:hover .maplibregl-ctrl-attrib-inner,
-.maplibregl-ctrl-attrib.maplibregl-compact:focus-within .maplibregl-ctrl-attrib-inner {
   display: block;
 }
 .maplibregl-ctrl-bottom-right {
@@ -2136,18 +2133,27 @@ button {
   cursor: pointer;
 }
 
-.niyvaru-orientation button {
+.niyvaru-compass button,
+.niyvaru-tilt button {
   display: grid;
   place-items: center;
 }
-.niyvaru-orientation button svg {
+.niyvaru-compass button svg {
   display: block;
 }
-.niyvaru-orientation button[data-mode="3d"] svg circle {
-  fill: rgba(150, 104, 47, 0.14);
+.niyvaru-tilt button {
+  font-family: var(--font-sans);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--bronze-deep);
 }
-.niyvaru-orientation button[data-mode="flat"] svg {
-  opacity: 0.7;
+.niyvaru-tilt button[data-mode="3d"] {
+  background: linear-gradient(#efe0c9, #e7d3b5);
+  color: #5d3e1a;
+}
+.niyvaru-tilt button[data-mode="flat"] {
+  color: var(--muted);
 }
 
 .user-location-marker {

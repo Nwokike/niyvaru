@@ -100,6 +100,7 @@ export const ar: Dictionary = {
     timeOfDayLabel: "وقت اليوم",
     timeOfDayLocal: "يتبع ساعة جهازك المحلية",
     toggle3d: "تبديل العرض ثلاثي الأبعاد",
+    compass: "العودة إلى الشمال",
     mapPlacesLabel: "الأماكن على الخريطة",
     keyboardHelp: "استخدم أسهم اليسار واليمين للتنتقل بين الأماكن. اضغط Escape لإغلاق المكان.",
     walkFromCenter: "ننطلق من مركز المنطقة",

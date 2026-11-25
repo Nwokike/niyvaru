@@ -294,7 +294,7 @@ export function App() {
     let disposed = false;
     const mapController = new AbortController();
     const apiPromise = import("./map/mapView")
-      .then(({ initMap }) => initMap(mapEl.current!, meta, mapController.signal, todRef.current, { orientation: d.explore.toggle3d }))
+      .then(({ initMap }) => initMap(mapEl.current!, meta, mapController.signal, todRef.current, { compass: d.explore.compass, tilt: d.explore.toggle3d }))
       .then((api) => {
         if (disposed) {
           api.destroy();
