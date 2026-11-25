@@ -180,8 +180,9 @@ export async function initMap(
   map.setMinZoom(11.5);
   map.jumpTo({
     center: [meta.lon, meta.lat],
-    // zoom eases down on narrow screens, like the reference site
-    zoom: Math.max(11.5, (meta.zoom ?? 15.2) + Math.max(-1.4, 0.75 * Math.log2(Math.max(320, width) / 1440))),
+    // zoom eases down on narrow screens, but never below the point where the
+    // 3D massing reads — a flat-looking first view was the top complaint.
+    zoom: Math.max(14.3, (meta.zoom ?? 15.2) + Math.max(-1.1, 0.75 * Math.log2(Math.max(320, width) / 1440))),
     pitch: 55,
     bearing: -15,  });
 

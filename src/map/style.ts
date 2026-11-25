@@ -147,12 +147,23 @@ function setup(regraded: RegradedStyle): void {
         type: "fill-extrusion",
         source: vectorSource,
         "source-layer": "building",
-        minzoom: 13,
+        minzoom: 12.8,
         filter: ["!=", ["get", "hide_3d"], true],
         paint: {
-          "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 13, 0, 13.6, ["coalesce", ["get", "render_height"], 8]],
-          "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 13, 0, 13.6, ["coalesce", ["get", "render_min_height"], 0]],
-          "fill-extrusion-opacity": 0.94,
+          // OSM heights around the Haram are often untagged (default 5 m), which
+          // reads as a flat slab. Floor at 12 m and exaggerate slightly so the
+          // city has relief even where the data is thin.
+          "fill-extrusion-height": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            12.8,
+            0,
+            13.6,
+            ["*", ["max", ["coalesce", ["get", "render_height"], 10], 12], 1.15],
+          ],
+          "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 12.8, 0, 13.6, ["coalesce", ["get", "render_min_height"], 0]],
+          "fill-extrusion-opacity": 0.92,
           "fill-extrusion-vertical-gradient": true,
         },
       },
