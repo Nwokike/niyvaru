@@ -257,12 +257,19 @@ export async function initMap(
   );
   map.addControl(new CompassControl(labels?.compass), "bottom-right");
   map.addControl(new TiltControl(labels?.tilt), "bottom-right");
-  // Attribution is collapsed by default and opens only on tap of the ⓘ.
-  map.once("idle", () => {
-    document
-      .querySelectorAll(".maplibregl-ctrl-attrib.maplibregl-compact-show")
-      .forEach((el) => el.classList.remove("maplibregl-compact-show"));
-  });
+  // Attribution: closed unless the traveller taps the ⓘ. MapLibre adds its own
+  // `compact-show` class on its own schedule, so the open state is ours.
+  const attribution = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
+  if (attribution) {
+    attribution.classList.remove("maplibregl-compact-show");
+    attribution.dataset.open = "false";
+    const toggle = attribution.querySelector<HTMLElement>(".maplibregl-ctrl-attrib-button");
+    toggle?.addEventListener("click", () => {
+      const open = attribution.dataset.open === "true";
+      attribution.dataset.open = open ? "false" : "true";
+      attribution.classList.toggle("maplibregl-compact-show", !open);
+    });
+  }
 
   mountedEpoch = regraded.styleEpoch;
   restoreCustomLayers();
