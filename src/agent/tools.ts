@@ -48,7 +48,12 @@ function compactPlace(p: Place): Record<string, unknown> {
   };
 }
 
+let indexCache: { version: string; db: ReturnType<typeof create> } | null = null;
+
 async function placeIndex(pack: AreaPack) {
+  // Building the index costs ~ms per call at city scale; one per pack version
+  // keeps repeated searches instant without holding stale data.
+  if (indexCache && indexCache.version === pack.version) return indexCache.db;
   const db = create({ schema: { name: "string", kind: "enum", extras: "string", ref: "string" } });
   await insertMultiple(
     db,
@@ -59,6 +64,7 @@ async function placeIndex(pack: AreaPack) {
       ref: p.id,
     }))
   );
+  indexCache = { version: pack.version, db };
   return db;
 }
 
@@ -137,6 +143,10 @@ export function createAgentTools(ctx: AgentContext) {
           const result = await search(db, {
             term: query,
             limit,
+            // One edit of typo tolerance, and the name outweighs tag soup —
+            // travellers type names, not OSM keys.
+            tolerance: 1,
+            boost: { name: 2 },
             where: kind ? { kind: { eq: kind } } : undefined,
           });
           const ranked = result.hits
@@ -400,7 +410,7 @@ export function createAgentTools(ctx: AgentContext) {
           }))
           .sort((a, b) => b.score - a.score)
           .slice(0, limit);
-        return { candidates: scored, note: "pricing is not in open data; the wholesale feed supplies it" };
+        return { candidates: scored, note: "open map data carries no hotel prices, and this prototype has no live inventory feed — never quote numbers" };
       },
     }),
 

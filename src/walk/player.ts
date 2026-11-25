@@ -38,6 +38,8 @@ export interface WalkOptions {
   frames: AnchoredFrame[];
   reducedMotion: boolean;
   labels: WalkLabels;
+  /** Honest origin: "from your location" or "from the area centre". */
+  originLabel: string;
   onEnd: () => void;
 }
 
@@ -64,7 +66,7 @@ interface WalkUi {
   strip?: HTMLDivElement;
 }
 
-function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, reducedMotion: boolean): WalkUi {
+function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, reducedMotion: boolean, originLabel: string): WalkUi {
   const root = document.createElement("div");
   root.className = "walk-overlay";
   root.setAttribute("role", "region");
@@ -101,7 +103,7 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
     </div>
     <div class="walk-bar"><i></i></div>
     <div class="walk-note">${frameCount >= 2 ? escapeHtml(labels.realFrames(frameCount)) : escapeHtml(labels.routeOnly)}</div>
-    <div class="walk-origin">${escapeHtml(labels.fromCentre)}</div>`;
+    <div class="walk-origin">${escapeHtml(originLabel)}</div>`;
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "walk-pause";
@@ -118,7 +120,12 @@ function buildOverlay(route: WalkRoute, labels: WalkLabels, frameCount: number, 
   stopBtn.type = "button";
   stopBtn.textContent = reducedMotion ? labels.exit : labels.stop;
 
-  root.append(media, pauseBtn, followBtn, stopBtn, hud);
+  // One flex row: the buttons can never overlap, in any language.
+  const controls = document.createElement("div");
+  controls.className = "walk-controls";
+  controls.append(pauseBtn, followBtn, stopBtn);
+
+  root.append(media, controls, hud);
   document.body.appendChild(root);
 
   if (strip) {
@@ -191,9 +198,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export function startWalk(options: WalkOptions): WalkHandle {
-  const { map, route, frames, reducedMotion, labels, onEnd } = options;
+  const { map, route, frames, reducedMotion, labels, originLabel, onEnd } = options;
   const demoSeconds = Math.min(DEMO_SECONDS_MAX, Math.max(DEMO_SECONDS_MIN, route.distanceM / 60));
-  const ui = buildOverlay(route, labels, frames.length, reducedMotion);
+  const ui = buildOverlay(route, labels, frames.length, reducedMotion, originLabel);
   const coords = route.coordinates as LonLat[];
   const cum = cumulativeDistances(coords);
   const narrow = window.innerWidth < 720;
@@ -220,7 +227,10 @@ export function startWalk(options: WalkOptions): WalkHandle {
 
   const updateHud = (t: number): void => {
     const walked = Math.round(route.distanceM * t);
-    const minutes = Math.max(1, Math.ceil(((1 - t) * demoSeconds) / 60));
+    // Honest ETA: remaining real metres at a stated walking pace, never the
+    // compressed preview clock (a 600 m route must not say "1 min left").
+    const remainingM = Math.max(0, route.distanceM - walked);
+    const minutes = Math.max(1, Math.ceil(remainingM / 80));
     ui.distEl.textContent = labels.distance(walked, route.distanceM);
     ui.etaEl.textContent = labels.eta(minutes);
     ui.barEl.style.width = `${Math.round(t * 100)}%`;

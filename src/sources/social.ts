@@ -60,11 +60,15 @@ export function blueskyLive(meta: AreaMeta, onItem: (item: PulseItem) => void): 
   let ws: WebSocket | null = null;
   let retryTimer: number | undefined;
   let closed = false;
+  let failures = 0;
 
   const connect = () => {
     if (closed) return;
     try {
       ws = new WebSocket(`${endpoints.social.jetstream}?${params}`);
+      ws.onopen = () => {
+        failures = 0;
+      };
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data as string) as {
@@ -88,8 +92,17 @@ export function blueskyLive(meta: AreaMeta, onItem: (item: PulseItem) => void): 
           /* malformed frame — ignore */
         }
       };
+      // A dead endpoint must not retry forever on a phone: exponential backoff,
+      // then give up quietly (the rail keeps working from its other sources).
       ws.onclose = () => {
-        if (!closed) retryTimer = window.setTimeout(connect, 15_000);
+        if (closed) return;
+        failures += 1;
+        if (failures > 5) return;
+        const delay = Math.min(60_000, 3_000 * 2 ** (failures - 1));
+        retryTimer = window.setTimeout(connect, delay);
+      };
+      ws.onerror = () => {
+        ws?.close();
       };
     } catch {
       /* Jetstream unreachable — the rail still works from the one-shot sources */

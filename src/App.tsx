@@ -8,7 +8,7 @@ import { walkingRoute } from "./sources/walkingRoutes";
 import { fetchFramesForRoute, matchFramesToRoute } from "./walk/matcher";
 import { startWalk, type WalkHandle } from "./walk/player";
 import { addChatMessage } from "./memory/store";
-import { KIND_GROUPS } from "./brand/tokens";
+import { KIND_GROUPS, kindGroupFor } from "./brand/tokens";
 import { dict, applyDocumentLocale, type Locale, type Dictionary } from "./config/i18n";
 import { Assembling } from "./ui/Assembling";
 import { Intake } from "./ui/Intake";
@@ -18,6 +18,7 @@ import { PulsePanel } from "./ui/PulsePanel";
 import { BriefPanel } from "./ui/BriefPanel";
 import { MemoryPanel } from "./ui/MemoryPanel";
 import { MapShell } from "./ui/MapShell";
+import { EmptyState } from "./ui/primitives";
 import { SURFACES, type Detent, type SurfaceId } from "./config/surfaces";
 import { localClock, localHourNow, localTimeZone, subscribeLocalTime } from "./config/time";
 import { shellReducer, initialShellState } from "./state/shell";
@@ -29,6 +30,32 @@ import type { TimePhase } from "./agent/tools";
 
 type View = "form" | "assembling" | "explore";
 type StageView = { state: StageState; detail?: string };
+
+/** Storage is best-effort: a blocked localStorage must never break the app. */
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode / blocked storage */
+  }
+}
+
+function metersBetween(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
 
 const EMPTY_STAGES: Record<StageKey, StageView> = {
   places: { state: "pending" },
@@ -66,7 +93,7 @@ export function App() {
   // Language is automatic: a saved choice wins, otherwise the browser's
   // language decides (first visit anywhere in the world).
   const [locale, setLocaleState] = useState<Locale>(() => {
-    const stored = localStorage.getItem("niyvaru.locale");
+    const stored = lsGet("niyvaru.locale");
     if (stored === "en" || stored === "ar") return stored;
     if (typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("ar")) return "ar";
     return "en";
@@ -159,7 +186,7 @@ export function App() {
   }, []);
   useEffect(() => {
     applyDocumentLocale(locale);
-    localStorage.setItem("niyvaru.locale", locale);
+    lsSet("niyvaru.locale", locale);
     mapRef.current?.labelLanguage(locale === "ar" ? "ar" : "en");
   }, [locale]);
 
@@ -167,6 +194,8 @@ export function App() {
 
   useEffect(() => () => {
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    // The walk overlay lives on document.body and must not outlive the app.
+    walkRef.current?.stop();
   }, []);
 
   const viewportInsetRef = useRef(0);
@@ -178,7 +207,10 @@ export function App() {
         ? 0
         : Math.max(0, window.innerHeight - surface.getBoundingClientRect().top);
       viewportInsetRef.current = inset;
-      mapRef.current?.setViewportInset(inset);
+      // Keep map controls above the sheet without a hard-coded height.
+      document.documentElement.style.setProperty("--map-inset", `${inset}px`);
+      // Desktop: the right panel would otherwise cover a focused pin.
+      mapRef.current?.setViewportInset(inset, mobile ? 0 : 416);
     };
     const id = window.requestAnimationFrame(apply);
     window.addEventListener("resize", apply);
@@ -217,10 +249,13 @@ export function App() {
         [update.key]: { state: update.state, detail: update.detail ?? s[update.key]?.detail },
       }));
     getOrAssembleArea(meta, onStage, (fresh) => {
+      // A late background refresh from the previous city must never replace
+      // the pack the traveller is looking at now.
+      if (fresh.id !== meta.id) return;
       setPack(fresh);
       setHero(fresh.heroPhoto);
     }, controller.signal).then((assembled) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || assembled.id !== meta.id) return;
       setPack(assembled);
       setHero(assembled.heroPhoto);
     }).catch((e) => {
@@ -241,7 +276,7 @@ export function App() {
       setRevealing(true);
       window.setTimeout(() => {
         setView("explore");
-        if (!localStorage.getItem("niyvaru.intake.done")) setShowIntake(true);
+        if (!lsGet("niyvaru.intake.done")) setShowIntake(true);
       }, 750);
     }
   }, [stages, view, meta]);
@@ -259,7 +294,7 @@ export function App() {
     let disposed = false;
     const mapController = new AbortController();
     const apiPromise = import("./map/mapView")
-      .then(({ initMap }) => initMap(mapEl.current!, meta, mapController.signal, todRef.current))
+      .then(({ initMap }) => initMap(mapEl.current!, meta, mapController.signal, todRef.current, { orientation: d.explore.toggle3d }))
       .then((api) => {
         if (disposed) {
           api.destroy();
@@ -312,7 +347,17 @@ export function App() {
           if (idx >= 0) setDiscoverIndex(idx);
         },
         filterKinds(kinds: string[] | null) {
-          mapRef.current?.filterKinds(kinds);
+          // Keep the visible filter state in sync with the map: the traveller
+          // must see that the agent narrowed the world, not just discover pins
+          // silently vanishing.
+          const group = kindGroupFor(kinds);
+          if (group) {
+            setKindGroup(group);
+            return;
+          }
+          setActiveKindGroup(null);
+          mapRef.current?.filterKinds(kinds && kinds.length ? kinds : null);
+          setDiscoverIndex(0);
         },
         showRoute(route: WalkRoute | null) {
           mapRef.current?.showRoute(route);
@@ -383,6 +428,7 @@ export function App() {
         route,
         frames,
         reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        originLabel: userLocation ? d.walk.fromYou : d.walk.fromCentre,
         labels: {
           eyebrow: d.walk.eyebrow,
           stop: d.walk.stop,
@@ -418,7 +464,7 @@ export function App() {
       (pos) => {
         const point = { lat: pos.coords.latitude, lon: pos.coords.longitude };
         setUserLocation(point);
-        mapRef.current?.setUserLocation(point.lat, point.lon);
+        mapRef.current?.setUserLocation(point.lat, point.lon, d.a11y.youAreHere);
       },
       (err) => {
         // The three browser failure modes need different advice; a generic
@@ -442,6 +488,12 @@ export function App() {
     async (target: Place): Promise<void> => {
       const origin = userLocation ?? (meta ? { lat: meta.lat, lon: meta.lon } : pack ? { lat: pack.center[0], lon: pack.center[1] } : null);
       if (!origin) return;
+      // A "walk" of a few metres is not a walk; say so instead of flying a
+      // zero-distance route with no imagery.
+      if (metersBetween(origin, target) < 60) {
+        setNotice(d.explore.errors.tooClose);
+        return;
+      }
       setWalking(true);
       try {
         // walkingRoute takes [lat, lon] pairs (it converts to GeoJSON order).
@@ -487,6 +539,9 @@ export function App() {
       data-walking={walking ? "true" : "false"}
       data-surface={shell.surface}
       data-detent={shell.detent}
+      /* the assembled pack currently on screen — also the browser-test hook
+         that proves a city switch swapped the data, not just the camera */
+      data-area={pack?.id ?? ""}
     >
       <div ref={mapEl} className="map" aria-label={meta ? d.a11y.mapLabel.replace("{area}", meta.name) : "map"} />
 
@@ -497,6 +552,9 @@ export function App() {
             <li key={p.id}>
               <button
                 type="button"
+                /* Screen-reader index only: thousands of places must not sit
+                   in the keyboard tab order ahead of the command rail. */
+                tabIndex={-1}
                 onClick={() => {
                   setDiscoverIndex(idx);
                   setPlace(p);
@@ -520,7 +578,7 @@ export function App() {
           revealing={revealing}
           onEnter={() => {
             setView("explore");
-            if (!localStorage.getItem("niyvaru.intake.done")) setShowIntake(true);
+            if (!lsGet("niyvaru.intake.done")) setShowIntake(true);
           }}
         />
       ) : null}
@@ -648,7 +706,12 @@ export function App() {
                   <h4 className="discover-preview-title">{discoverPlaces[0].nameEn ?? discoverPlaces[0].name} →</h4>
                 </button>
               ) : (
-                <p className="muted">{d.discover.noPlaces}</p>
+                <EmptyState
+                  d={d}
+                  title={d.discover.noPlaces}
+                  actionLabel={d.shell.search}
+                  onAction={() => setShowIntake(true)}
+                />
               )}
             </>
           ) : shell.surface === "pulse" && pack ? (
@@ -678,7 +741,13 @@ export function App() {
               </Suspense>
             </div>
           ) : shell.surface === "agent" ? (
-            <p className="muted">{agentError ?? d.common.loading}</p>
+            <EmptyState
+              d={d}
+              title={agentError ? d.explore.errors.agentUnavailable : d.common.loading}
+              detail={agentError ?? undefined}
+              actionLabel={agentError ? d.common.retry : undefined}
+              onAction={agentError ? () => { setAgentError(null); setMemoryRev((r) => r + 1); } : undefined}
+            />
           ) : null}
         </MapShell>
       ) : null}
@@ -723,10 +792,13 @@ export function App() {
           onPickArea={selectArea}
           onClose={(chosen) => {
             setShowIntake(false);
-            localStorage.setItem("niyvaru.intake.done", "1");
+            lsSet("niyvaru.intake.done", "1");
             setMemoryRev((r) => r + 1);
             if (chosen) {
-              if (view === "form" || chosen.id !== meta?.id) {
+              // Compare against the pack actually on screen: picking a chip
+              // already updates `meta`, so meta equality can never be the
+              // test for "the traveller chose a different city".
+              if (view === "form" || !pack || chosen.id !== pack.id) {
                 startAssembly(chosen);
               }
             }

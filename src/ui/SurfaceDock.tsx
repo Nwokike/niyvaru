@@ -22,7 +22,7 @@ export function SurfaceDock({
   onSetDetent: (detent: Detent) => void;
 }) {
   return (
-    <nav className="surface-dock" role="tablist" aria-label={d.shell.expand}>
+    <nav className="surface-dock" aria-label={d.shell.expand}>
       <div className="dock-detents" role="group" aria-label={d.shell.expand}>
         {(["peek", "half", "full"] as Detent[]).map((value) => (
           <button
@@ -37,7 +37,9 @@ export function SurfaceDock({
           </button>
         ))}
       </div>
-      <div className="dock-tabs">
+      {/* Only the destination tabs are a tablist; the detent buttons above are
+          a separate group, not tabs. */}
+      <div className="dock-tabs" role="tablist" aria-label={d.shell.expand}>
         {DOCK_SURFACES.map((def) => {
           const count = counts[def.id];
           return (
@@ -49,7 +51,7 @@ export function SurfaceDock({
               aria-selected={surface === def.id || (walking && def.id === "explore")}
               className="dock-tab"
               data-active={surface === def.id}
-              onClick={() => onSelect(def.id, def.defaultDetent)}
+              onClick={() => onSelect(def.id, surface === def.id ? detent : def.defaultDetent)}
             >
               <span className="dock-icon" aria-hidden="true"><SurfaceIcon name={def.icon} /></span>
               <span className="dock-label">{def.label(d)}</span>

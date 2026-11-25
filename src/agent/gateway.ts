@@ -17,54 +17,56 @@ async function gatewayFetch(input: RequestInfo | URL, init?: RequestInit): Promi
   const res = await fetch(target, init);
   if (res.ok) return res;
 
-  // On HTTP 500 / 502 / 503 / 504 / 400 (which indicates the gateway's fallback
-  // chain exhausted all free models, often due to context limits on smaller models):
-  // perform an emergency context compaction and retry once without breaking user flow.
-  if (res.status >= 500 || res.status === 400) {
-    const errText = await res.clone().text().catch(() => "");
-    debugError("gateway", `HTTP ${res.status}`, errText.slice(0, 300));
+  const errText = await res.clone().text().catch(() => "");
 
-    if (init?.body && typeof init.body === "string") {
-      try {
-        const bodyObj = JSON.parse(init.body);
-        if (Array.isArray(bodyObj.messages) && bodyObj.messages.length > 2) {
-          const msgs = bodyObj.messages;
-          const systemMsg = msgs.find((m: { role: string }) => m.role === "system");
-          const nonSystem = msgs.filter((m: { role: string }) => m.role !== "system");
+  // Only a genuine capacity failure is worth compacting for. A 400 caused by
+  // auth/schema/provider misuse must surface as-is instead of triggering a
+  // pointless retry (and the original response is returned either way).
+  if (!isCapacityFailure(res.status, errText)) return res;
 
-          // Truncate bulky tool results
-          const compacted = nonSystem.map((m: { role: string; content?: string }) => {
-            if (m.role === "tool" && typeof m.content === "string" && m.content.length > 300) {
-              return { ...m, content: m.content.slice(0, 300) + "… [compacted]" };
-            }
-            return m;
-          });
+  debugError("gateway", `HTTP ${res.status}`, errText.slice(0, 300));
 
-          // Retain system instructions, first user prompt, and the last 4 messages
-          const pruned = [
-            ...(systemMsg ? [systemMsg] : []),
-            compacted[0],
-            ...compacted.slice(-4),
-          ].filter((v, i, a) => a.indexOf(v) === i);
-
-          debugLog("gateway", `retrying on HTTP ${res.status} with compacted messages (${msgs.length} → ${pruned.length})`);
-          const retryInit = {
-            ...init,
-            body: JSON.stringify({ ...bodyObj, messages: pruned }),
-          };
-          const retryRes = await fetch(target, retryInit);
-          if (retryRes.ok) {
-            debugLog("gateway", "emergency compaction succeeded on retry");
-            return retryRes;
+  if (init?.body && typeof init.body === "string") {
+    try {
+      const bodyObj = JSON.parse(init.body);
+      if (Array.isArray(bodyObj.messages) && bodyObj.messages.length > 2) {
+        const msgs = bodyObj.messages as { role: string; content?: string }[];
+        const systemMsg = msgs.find((m) => m.role === "system");
+        const nonSystem = msgs.filter((m) => m.role !== "system");
+        // Keep from the last user instruction onward: that slice is internally
+        // consistent (tool calls and their results stay together), unlike an
+        // arbitrary tail cut.
+        let tailStart = nonSystem.length - 1;
+        while (tailStart > 0 && nonSystem[tailStart].role !== "user") tailStart -= 1;
+        const kept = nonSystem.slice(tailStart).map((m) => {
+          if (m.role === "tool" && typeof m.content === "string" && m.content.length > 300) {
+            return { ...m, content: m.content.slice(0, 300) + "… [compacted]" };
           }
+          return m;
+        });
+        const pruned = [...(systemMsg ? [systemMsg] : []), ...kept];
+
+        debugLog("gateway", `retrying on HTTP ${res.status} with compacted messages (${msgs.length} → ${pruned.length})`);
+        const retryInit = { ...init, body: JSON.stringify({ ...bodyObj, messages: pruned }) };
+        const retryRes = await fetch(target, retryInit);
+        if (retryRes.ok) {
+          debugLog("gateway", "emergency compaction succeeded on retry");
+          return retryRes;
         }
-      } catch {
-        /* proceed to return original response */
       }
+    } catch {
+      /* proceed to return original response */
     }
   }
 
   return res;
+}
+
+function isCapacityFailure(status: number, errText: string): boolean {
+  if (status === 413 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+  // Some providers report a context overflow as 400 with prose in the body.
+  if (status === 400) return /context|token|too long|maximum|length|messages/i.test(errText);
+  return false;
 }
 
 /** The routed model: the gateway resolves its own free roster per task type. */

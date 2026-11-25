@@ -53,7 +53,10 @@ export async function getOrAssembleArea(
   onUpdate?: (pack: AreaPack) => void,
   signal?: AbortSignal
 ): Promise<AreaPack> {
-  const cachedPack = (await loadPack(meta.id)) as AreaPack | undefined;
+  const cached = (await loadPack(meta.id)) as AreaPack | undefined;
+  // An empty cached pack is not coverage — it is a failed assembly that must
+  // never be served again. Ignore it (and let the fresh run replace it).
+  const cachedPack = cached && cached.places.length > 0 ? cached : undefined;
   if (cachedPack) {
     for (const key of ["places", "photos", "story", "routes", "pulse"] as const) {
       onStage({ key, state: "done" });
@@ -61,15 +64,21 @@ export async function getOrAssembleArea(
     const fresh = Date.now() - new Date(cachedPack.version).getTime() < FRESH_MS;
     if (!fresh) {
       void assembleArea(meta, onStage, signal)
-        .then((freshPack) => onUpdate?.(freshPack))
+        .then((freshPack) => {
+          // The traveller may have switched city while this ran; a late pack
+          // must never replace a different area's data.
+          if (!signal?.aborted && freshPack.id === meta.id) onUpdate?.(freshPack);
+        })
         .catch(() => {});
     }
     onUpdate?.(cachedPack);
     return cachedPack;
   }
   const pack = await assembleArea(meta, onStage, signal);
+  if (signal?.aborted || pack.id !== meta.id) return pack;
   onUpdate?.(pack);
-  await savePack(meta.id, pack);
+  // Only real coverage is worth remembering; an empty city retries next visit.
+  if (pack.places.length > 0) await savePack(meta.id, pack);
   return pack;
 }
 

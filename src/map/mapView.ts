@@ -25,6 +25,84 @@ import {
 import { debugLog, debugTime } from "../debug";
 import type { AreaMeta, AreaPack, Place, WalkRoute } from "../sources/types";
 
+/** The cinematic view the app opens with; the compass toggles back to it. */
+const SHOWCASE = { pitch: 55, bearing: -15 };
+
+const COMPASS_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+  <circle cx="12" cy="12" r="9" fill="none" stroke="#96682f" stroke-width="1.6"/>
+  <path d="M12 5.5 15 15l-3-2.2L9 15Z" fill="#96682f"/>
+</svg>`;
+
+/**
+ * Two-state orientation control. Stock MapLibre compasses only reset to
+ * north-up and flatten the map, after which the app's 3D view is lost.
+ * This one toggles: showcase view ⇄ north-up, both recoverable.
+ */
+class OrientationControl implements maplibregl.IControl {
+  private map?: MLMap;
+  private button?: HTMLButtonElement;
+  private readonly onClick = (): void => this.toggle();
+  private readonly sync = (): void => this.syncState();
+
+  constructor(
+    private readonly showcase: { pitch: number; bearing: number },
+    private readonly label = "Toggle 3D view"
+  ) {}
+
+  onAdd(map: MLMap): HTMLElement {
+    this.map = map;
+    const container = document.createElement("div");
+    container.className = "maplibregl-ctrl maplibregl-ctrl-group niyvaru-orientation";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = this.label;
+    button.setAttribute("aria-label", this.label);
+    button.innerHTML = COMPASS_SVG;
+    button.addEventListener("click", this.onClick);
+    container.appendChild(button);
+    this.button = button;
+    map.on("move", this.sync);
+    this.syncState();
+    return container;
+  }
+
+  onRemove(): void {
+    this.button?.removeEventListener("click", this.onClick);
+    this.map?.off("move", this.sync);
+    this.map = undefined;
+    this.button = undefined;
+  }
+
+  /** Visible state: `3d` when the showcase view is active, `flat` otherwise. */
+  private syncState(): void {
+    if (!this.button) return;
+    const showcase = this.atShowcase();
+    this.button.dataset.mode = showcase ? "3d" : "flat";
+    this.button.setAttribute("aria-pressed", String(showcase));
+  }
+
+  private atShowcase(): boolean {
+    const map = this.map;
+    if (!map) return false;
+    // Bearings are 0–360 (showcase −15 arrives as 345); compare the short arc.
+    const bearingDelta = Math.abs(((map.getBearing() - this.showcase.bearing + 540) % 360) - 180);
+    return Math.abs(map.getPitch() - this.showcase.pitch) < 3 && bearingDelta < 3;
+  }
+
+  private toggle(): void {
+    const map = this.map;
+    if (!map) return;
+    const next = this.atShowcase()
+      ? { pitch: 0, bearing: 0 }
+      : { pitch: this.showcase.pitch, bearing: this.showcase.bearing };
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    map.stop();
+    if (reduced) map.jumpTo(next);
+    else map.easeTo({ ...next, duration: 650 });
+    this.syncState();
+  }
+}
+
 export interface MapApi {
   map: MLMap;
   setPlaces(pack: AreaPack): void;
@@ -34,9 +112,9 @@ export interface MapApi {
   filterKinds(kinds: string[] | null): void;
   /** Continuous hour 0–24 — relights the whole city. */
   setHour(hour: number): void;
-  /** Reserve visible map space above the surface dock. */
-  setViewportInset(bottom: number): void;
-  setUserLocation(lat: number, lon: number): void;
+  /** Reserve visible map space above the surface dock (and beside the panel). */
+  setViewportInset(bottom: number, right?: number): void;
+  setUserLocation(lat: number, lon: number, label?: string): void;
   labelLanguage(lang: string): void;
   onPlaceClick(cb: (place: Place) => void, lookup: (id: string) => Place | undefined): void;
   destroy(): void;
@@ -53,7 +131,8 @@ export async function initMap(
   container: HTMLElement,
   meta: AreaMeta,
   signal?: AbortSignal,
-  initialHour = 18.5
+  initialHour = 18.5,
+  labels?: { orientation?: string }
 ): Promise<MapApi> {
   const done = debugTime("map", "initMap total");
   debugLog("map", "initMap start", { area: meta.id });
@@ -69,6 +148,12 @@ export async function initMap(
   const regraded = await loadRegradedStyle(container, {
     maxPitch: 78,
     lowPower: low,
+    // A city-bounded app never needs the planet repeated around the antimeridian,
+    // and phone GPUs must not hold a deep tile cache.
+    renderWorldCopies: false,
+    maxTileCacheSize: low ? 32 : 96,
+    maxTileCacheZoomLevels: 3,
+    fadeDuration: low ? 0 : 200,
   });
   const map = regraded.map;
   const cleanup = (): void => {
@@ -95,8 +180,7 @@ export async function initMap(
     // zoom eases down on narrow screens, like the reference site
     zoom: Math.max(11.5, (meta.zoom ?? 15.2) + Math.max(-1.4, 0.75 * Math.log2(Math.max(320, width) / 1440))),
     pitch: 55,
-    bearing: -15,
-  });
+    bearing: -15,  });
 
   // Keep the latest source data so a fallback style replacement can restore
   // every custom layer instead of silently wiping the dossier map surface.
@@ -131,16 +215,19 @@ export async function initMap(
   signal?.throwIfAborted();
 
   // MapLibre disables the zoom buttons at the min/max limits itself; styles.css
-  // paints that disabled state ash-grey like the reference map.
+  // paints that disabled state ash-grey like the reference map. The compass is
+  // ours (below): a stock compass only flattens the map and cannot restore the
+  // cinematic view, which is a dead end.
   map.addControl(
     new maplibregl.NavigationControl({
       showZoom: true,
-      showCompass: true,
+      showCompass: false,
       visualizePitch: true,
       visualizeRoll: true,
     }),
     "bottom-right"
   );
+  map.addControl(new OrientationControl(SHOWCASE, labels?.orientation), "bottom-right");
 
   mountedEpoch = regraded.styleEpoch;
   restoreCustomLayers();
@@ -213,11 +300,11 @@ export async function initMap(
       setKindFilter(map, kinds);
     },
     setHour,
-    setViewportInset(bottom: number) {
-      map.setPadding({ top: 0, right: 0, bottom: Math.max(0, bottom), left: 0 });
+    setViewportInset(bottom: number, right = 0) {
+      map.setPadding({ top: 0, right: Math.max(0, right), bottom: Math.max(0, bottom), left: 0 });
     },
-    setUserLocation(lat: number, lon: number) {
-      showUserLocation(map, lat, lon);
+    setUserLocation(lat: number, lon: number, label?: string) {
+      showUserLocation(map, lat, lon, label);
       map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 16), duration: 900 });
     },
     labelLanguage(lang: string) {

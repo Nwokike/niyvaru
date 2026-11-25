@@ -27,8 +27,9 @@ window.addEventListener("vite:preloadError", () => {
   window.location.reload();
 });
 
-// Offline app shell (area data caches itself in IndexedDB)
-if ("serviceWorker" in navigator) {
+// Offline app shell (area data caches itself in IndexedDB). Production only:
+// a dev-mode worker caches source modules and serves stale CSS after edits.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     const base = import.meta.env.BASE_URL ?? "/";
     navigator.serviceWorker.register(`${base}sw.js`).catch(() => {

@@ -13,6 +13,7 @@ import {
   PrayerTimes,
 } from "adhan";
 import { cached } from "./cache";
+import { endpoints } from "../config/endpoints";
 import type { PrayerDay } from "./types";
 
 const METHODS: Record<string, () => CalculationParameters> = {
@@ -32,7 +33,7 @@ const METHODS: Record<string, () => CalculationParameters> = {
 
 export function areaTimezone(lat: number, lon: number, signal?: AbortSignal): Promise<string> {
   return cached(`tz:${lat.toFixed(3)},${lon.toFixed(3)}`, 30 * 24 * 3600_000, async () => {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&timezone=auto&forecast_days=1`;
+    const url = `${endpoints.weather.openMeteo}?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&timezone=auto&forecast_days=1`;
     const res = await fetch(url, { signal });
     if (!res.ok) throw new Error(`tz ${res.status}`);
     const j = (await res.json()) as { timezone?: string };

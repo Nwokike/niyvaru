@@ -42,7 +42,7 @@ export function StatusPill({
   );
   if (!onClick) return <span className={className}>{content}</span>;
   return (
-    <button type="button" className={className} onClick={onClick} aria-label={ariaLabel ?? `${label}${value ? ` ${value}` : ""}`} aria-pressed={active}>
+    <button type="button" className={className} onClick={onClick} aria-label={ariaLabel ?? `${label}${value ? ` ${value}` : ""}`}>
       {content}
     </button>
   );

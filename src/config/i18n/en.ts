@@ -97,6 +97,7 @@ export const en = {
     changeArea: "Change area",
     timeOfDayLabel: "Time of day",
     timeOfDayLocal: "Follows your device’s local clock",
+    toggle3d: "Toggle 3D view",
     mapPlacesLabel: "Places on the map",
     keyboardHelp: "Use the left and right arrow keys to step through places. Press Escape to close a place.",
     walkFromCenter: "Starting from the area centre",
@@ -109,6 +110,8 @@ export const en = {
       locationUnavailable: "Your device could not report a location just now. The walk will start from the area centre.",
       locationTimeout: "Getting your location took too long. Try again, or the walk starts from the area centre.",
       locationUnsupported: "This browser does not offer location access. The walk starts from the area centre.",
+      tooClose: "You're already there — this place is only a few steps away.",
+      agentUnavailable: "The concierge could not answer just now.",
     },
     timeOfDay: { dawn: "Dawn", day: "Day", golden: "Golden", night: "Night" },
     layers: { hotels: "Hotels", pharmacy: "Pharmacies", food: "Food", worship: "Worship", shops: "Shops", health: "Health", money: "Money", heritage: "Heritage", green: "Parks", all: "Everything" },
@@ -160,7 +163,7 @@ export const en = {
 
   memory: {
     title: "What Niyvaru remembers about you",
-    lede: "Everything lives on this device — never on a server. The agent reads and edits these files itself as it learns.",
+    lede: "Stored only on this device. When you ask the concierge, the relevant memory and your message are sent to the model gateway to answer — nothing is stored server-side.",
     export: "Export",
     import: "Import",
     clear: "Clear everything",
@@ -175,6 +178,7 @@ export const en = {
     importError: "That file could not be imported as Niyvaru memory.",
     persistent: "Persistent storage granted",
     bestEffort: "Best-effort storage",
+    confirmImport: "Import this memory file? Existing notes are archived, never destroyed.",
   },
 
   intake: {
@@ -229,7 +233,7 @@ export const en = {
     searchHintShort: "Type at least 2 characters",
     saveError: "Your answers could not be saved on this device. Try again — nothing has been lost from the form.",
     cta: "Begin exploring",
-    privacy: "Your answers are saved on this device only — they teach your concierge what matters. No account, no server.",
+    privacy: "Your answers are saved on this device only, and the concierge uses them to tailor what it shows you. No account.",
   },
 
 
@@ -264,6 +268,9 @@ export const en = {
     timeOfDay: "Time of day, {clock} — {phase}",
     placeList: "Places on the map",
     searchResults: "Search results",
+    stop: "Stop the answer",
+    language: "Language",
+    youAreHere: "You are here",
   },
 };
 

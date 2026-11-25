@@ -22,7 +22,8 @@ export interface MemoryPolicy {
     summariseAfterEntries: number;
     keepEntries: number;
   };
-  /** Chat window kept verbatim in context. */
+  /** Chat turns kept verbatim in the model's per-step context (enforced by
+   *  the agent runtime's prepareStep). The UI may show more history than this. */
   chatWindowTurns: number;
   /** Token budget for the whole memory slice injected per turn. */
   contextBudgetTokens: number;

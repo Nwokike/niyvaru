@@ -157,6 +157,10 @@ export async function importMemory(dump: {
   const d = await db();
   for (const file of dump.files ?? []) {
     const path = assertInRoot(file.path);
+    // Import is a merge, never a silent overwrite: the previous version is
+    // archived exactly as an agent write would do.
+    const previous = (await d.get(MEM_FILES, path)) as MemoryFile | undefined;
+    if (previous && previous.content !== file.content) await archiveEntry(path, previous.content);
     const record = { path, content: file.content, updatedAt: file.updatedAt ?? Date.now() } satisfies MemoryFile;
     await d.put(MEM_FILES, record, record.path);
   }

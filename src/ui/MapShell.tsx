@@ -66,18 +66,6 @@ export function MapShell({
           <span aria-hidden="true"><SurfaceIcon name="spark" /></span>
           <span>{d.shell.ask}</span>
         </button>
-        <StatusRail
-          d={d}
-          pack={pack}
-          todLabel={todLabel}
-          clock={clock}
-          walking={walking}
-          walkingDistance={walkingDistance}
-          kindGroup={kindGroup}
-          onKindGroup={onKindGroup}
-          onOpenAtmosphere={onOpenAtmosphere}
-          onOpenSurface={onOpenSurface}
-        />
         <button type="button" className="command-locate" onClick={onLocate} aria-label={d.shell.locate} title={d.shell.locate}>
           <span aria-hidden="true"><SurfaceIcon name="locate" /></span>
           <span>{d.shell.locate}</span>
@@ -90,11 +78,25 @@ export function MapShell({
           className="command-lang"
           value={locale}
           onChange={(e) => onLocale(e.target.value as "en" | "ar")}
-          aria-label="Language / اللغة"
+          aria-label={d.a11y.language}
         >
           <option value="en">EN</option>
           <option value="ar">ع</option>
         </select>
+        {/* Last child: the rail spans its own row instead of splitting the
+            command buttons across three rows on a phone. */}
+        <StatusRail
+          d={d}
+          pack={pack}
+          todLabel={todLabel}
+          clock={clock}
+          walking={walking}
+          walkingDistance={walkingDistance}
+          kindGroup={kindGroup}
+          onKindGroup={onKindGroup}
+          onOpenAtmosphere={onOpenAtmosphere}
+          onOpenSurface={onOpenSurface}
+        />
       </header>
 
       {notice ? (
@@ -116,7 +118,7 @@ export function MapShell({
           type="button"
           className="surface-grab"
           onClick={() => onSetDetent(shell.detent === "peek" ? "half" : shell.detent === "half" ? "full" : "peek")}
-          aria-label={`${surfaceLabel}: ${d.shell[shell.detent]}`}
+          aria-label={`${surfaceLabel}: ${shell.detent === "peek" ? d.shell.half : shell.detent === "half" ? d.shell.full : d.shell.peek}`}
         >
           <span aria-hidden="true" />
           <span>{surfaceLabel} · {d.shell[shell.detent]}</span>

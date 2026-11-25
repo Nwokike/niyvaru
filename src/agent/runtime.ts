@@ -17,6 +17,7 @@ import { buildSystemPrompt } from "./prompt";
 import { createAgentTools, normalizeToolArgs, type AgentContext } from "./tools";
 import type { AreaPack } from "../sources/types";
 import type { Locale } from "../config/i18n";
+import { memoryPolicy } from "../config/memory-policy";
 import { seedIfEmpty } from "../memory/store";
 
 export type NiyvaruTools = ReturnType<typeof createAgentTools>;
@@ -71,6 +72,19 @@ function stopAfterRepeatedToolCalls<TOOLS extends ToolSet>(repeats = 3): StopCon
   };
 }
 
+/**
+ * Enforce the declared conversation window. The UI keeps the full history;
+ * the model sees only the last `turns` exchanges, and never starts on a tool
+ * result that belongs to a dropped turn (that would be an invalid sequence).
+ */
+function windowMessages<M extends { role: string }>(messages: M[], turns: number): M[] {
+  const keep = Math.max(2, turns * 2 + 1);
+  if (messages.length <= keep) return messages;
+  let start = messages.length - keep;
+  while (start < messages.length && messages[start].role === "tool") start += 1;
+  return messages.slice(start);
+}
+
 export async function createNiyvaruAgent(
   ctx: AgentContext,
   pack: AreaPack | null
@@ -85,8 +99,9 @@ export async function createNiyvaruAgent(
     // before every step, so memory the agent writes mid-turn is visible
     // immediately and the context stays trimmed for the 8K window.
     instructions: await buildSystemPrompt(pack, ctx.locale()),
-    prepareStep: async () => ({
+    prepareStep: async ({ messages }) => ({
       instructions: await buildSystemPrompt(ctx.getPack(), ctx.locale()),
+      messages: windowMessages(messages, memoryPolicy.chatWindowTurns),
     }),
     tools,
     toolOrder,

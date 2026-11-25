@@ -107,8 +107,8 @@ export const endpoints = {
   },
 
   social: {
-    /** Bluesky Jetstream public relay — plain JSON over WebSocket, no auth. */
-    jetstream: "wss://jetstream1.us-east.bsky.network/subscribe",
+    /** Bluesky Jetstream v2 public relay — plain JSON over WebSocket, no auth. */
+    jetstream: "wss://jetstream.us-east.bsky.network/subscribe",
     /** Mastodon instances whose public timelines allow unauthenticated reads. */
     mastodon: ["https://mastodon.social", "https://mstdn.social"],
   },

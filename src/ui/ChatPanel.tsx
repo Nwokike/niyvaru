@@ -75,7 +75,10 @@ export function ChatPanel({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     experimental_queue: true,
-    onFinish: ({ messages: finished }) => {
+    onFinish: ({ messages: finished, isAbort, isError, isDisconnect }) => {
+      // A failed/aborted turn is not a conversation turn: storing half an
+      // answer as memory would teach the concierge its own glitches.
+      if (isAbort || isError || isDisconnect) return;
       const lastUser = [...finished].reverse().find((m) => m.role === "user");
       const lastAssistant = [...finished].reverse().find((m) => m.role === "assistant");
       const textOf = (m: (typeof finished)[number] | undefined): string =>
@@ -204,7 +207,7 @@ export function ChatPanel({
           aria-label={d.explore.askPlaceholder}
         />
         {busy ? (
-          <button className="btn btn-ghost" onClick={stop} aria-label="stop">
+          <button className="btn btn-ghost" onClick={stop} aria-label={d.a11y.stop}>
             ■
           </button>
         ) : (

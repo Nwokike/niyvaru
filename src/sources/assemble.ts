@@ -293,15 +293,17 @@ export async function assembleArea(
       const practical = ranked.find((p) => p.kind === "pharmacy") ?? ranked.find((p) => p.kind === "shop");
       const green = ranked.find((p) => p.kind === "green");
       const picks = [
-        landmark && { label: "Walk to", dest: landmark },
-        practical && { label: "Everyday", dest: practical },
-        green && green !== landmark && { label: "Outdoors", dest: green },
-      ].filter(Boolean) as { label: string; dest: Place }[];
+        landmark && { dest: landmark },
+        practical && { dest: practical },
+        green && green !== landmark && { dest: green },
+      ].filter(Boolean) as { dest: Place }[];
       counts.routes = picks.length;
       onStage({ key: "routes", state: "active", detail: `routing ${picks.length} walks` });
       const settled = await Promise.allSettled(
         picks.map(async (pick, i) => {
-          const route = await walkingRoute(`${pick.label} ${pick.dest.name}`, [
+          // The route is named after its real destination — place names are
+          // data, not translatable UI copy, so no label leaks in one language.
+          const route = await walkingRoute(pick.dest.nameEn ?? pick.dest.name, [
             [meta.lat, meta.lon],
             [pick.dest.lat, pick.dest.lon],
           ], signal);

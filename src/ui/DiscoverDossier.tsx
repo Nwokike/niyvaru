@@ -35,6 +35,7 @@ export function DiscoverDossier({
   const rtl = d.dir === "rtl";
   const [expanded, setExpanded] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState(0);
 
   const goPrev = (): void => {
     onSelectIndex(currentIndex > 0 ? currentIndex - 1 : total - 1);
@@ -47,18 +48,20 @@ export function DiscoverDossier({
   useEffect(() => {
     setExpanded(false);
     setPhotoFailed(false);
+    setPhotoIndex(0);
   }, [currentIndex]);
 
   useEffect(() => {
     if (!keyboardEnabled) return;
     const handleKey = (e: KeyboardEvent): void => {
+      // Arrow keys belong to the text fields, but a focused button (the
+      // stepper, ask, close) should still let the traveller page places.
       const target = e.target as HTMLElement | null;
       if (
         target &&
         (target instanceof HTMLInputElement ||
           target instanceof HTMLTextAreaElement ||
           target instanceof HTMLSelectElement ||
-          target instanceof HTMLButtonElement ||
           target.isContentEditable)
       ) return;
       if (e.key === "ArrowRight") {
@@ -78,11 +81,13 @@ export function DiscoverDossier({
   if (!place) return null;
 
   const status = place.tags.openingHours ? openingHoursAt(place.tags.openingHours) : { state: "unknown" as const };
-  const name = place.nameEn ?? place.name;
+  // In Arabic the Arabic name leads; the other name becomes the subtitle.
+  const name = d.dir === "rtl" && place.name ? place.name : place.nameEn ?? place.name;
+  const subname = d.dir === "rtl" ? (place.nameEn && place.nameEn !== place.name ? place.nameEn : undefined) : place.name !== name ? place.name : undefined;
   // Every photograph the assembler attached is shown; the pack already bounds
   // galleries per place, so there is no arbitrary showcase cut here.
   const photos = place.photos;
-  const mainPhoto = photos[0];
+  const mainPhoto = photos[Math.min(photoIndex, Math.max(0, photos.length - 1))];
   const website = safeWebsiteUrl(place.tags.website);
   const websiteHost = safeWebsiteHost(place.tags.website);
   const credit = (photo: (typeof photos)[number]): string =>
@@ -146,27 +151,40 @@ export function DiscoverDossier({
         <>
           <div className="dossier-photo-wrap arch">
             <img
-              src={mainPhoto.thumbUrl}
+              /* the full-resolution file, not the list thumbnail: this image
+                 fills the card on a 3× phone screen */
+              src={mainPhoto.url}
               alt=""
               title={credit(mainPhoto)}
               className="dossier-photo"
-              loading="lazy"
+              loading="eager"
               onError={() => setPhotoFailed(true)}
             />
             <div className="dossier-photo-attr">{credit(mainPhoto)}</div>
           </div>
           {photos.length > 1 ? (
             <div className="dossier-photo-strip">
-              {photos.slice(1).map((photo, i) => (
-                <figure className="dossier-photo-thumb" key={i} title={credit(photo)}>
+              {photos.map((photo, i) => (
+                <button
+                  type="button"
+                  className="dossier-photo-thumb"
+                  key={i}
+                  title={credit(photo)}
+                  aria-label={`${d.discover.ask} ${i + 1}`}
+                  aria-pressed={i === photoIndex}
+                  onClick={() => {
+                    setPhotoIndex(i);
+                    setPhotoFailed(false);
+                  }}
+                >
                   <img
                     src={photo.thumbUrl}
                     alt=""
                     loading="lazy"
                     onError={(e) => (e.currentTarget.parentElement?.style.setProperty("display", "none"))}
                   />
-                  <figcaption className="dossier-photo-thumb-attr">{credit(photo)}</figcaption>
-                </figure>
+                  <span className="dossier-photo-thumb-attr">{credit(photo)}</span>
+                </button>
               ))}
             </div>
           ) : null}
@@ -180,9 +198,7 @@ export function DiscoverDossier({
 
       <div className="dossier-head" role="status">
         <h3 className="dossier-title">{name}</h3>
-        {place.nameEn && place.nameEn !== place.name ? (
-          <div className="dossier-subname">{place.name}</div>
-        ) : null}
+        {subname ? <div className="dossier-subname">{subname}</div> : null}
       </div>
 
       <div className="place-meta">

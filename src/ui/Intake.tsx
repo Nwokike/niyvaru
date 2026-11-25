@@ -235,7 +235,7 @@ export function Intake({
     setSubmitting(true);
     setShowWarning("");
     try {
-      await writeFile(
+      const travellerWrite = await writeFile(
         "/memories/traveller.md",
         travellerMarkdown({
           name, adults, children, rooms, standard, proximity, breakfast, elderly, wheelchair, language,
@@ -243,7 +243,7 @@ export function Intake({
           interestKeys: interests,
         })
       );
-      await writeFile(
+      const tripWrite = await writeFile(
         "/memories/trip.md",
         tripMarkdown({
           areaId: current.id,
@@ -254,11 +254,13 @@ export function Intake({
           flexible,
         })
       );
-      setSaveError("");
+      setSaveError(travellerWrite.ok && tripWrite.ok ? "" : d.intake.saveError);
       clearDraft();
+      // Storage is best-effort: a failed write is reported, never a gate.
       onClose(current);
     } catch {
       setSaveError(d.intake.saveError);
+      onClose(current);
     } finally {
       setSubmitting(false);
     }

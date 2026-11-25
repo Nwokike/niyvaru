@@ -45,6 +45,7 @@ export function MemoryPanel({ d }: { d: Dictionary }) {
   };
 
   const importAll = async (file: File): Promise<void> => {
+    if (!window.confirm(d.memory.confirmImport)) return;
     try {
       await importMemory(JSON.parse(await file.text()));
       setFeedback(d.memory.importSuccess);

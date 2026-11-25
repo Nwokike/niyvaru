@@ -201,12 +201,12 @@ export function clearFocusMarker(): void {
 let userMarker: maplibregl.Marker | null = null;
 
 /** Device location, only shown after the traveller grants permission. */
-export function showUserLocation(map: MLMap, lat: number, lon: number): void {
+export function showUserLocation(map: MLMap, lat: number, lon: number, label = "You are here"): void {
   userMarker?.remove();
   const el = document.createElement("div");
   el.className = "user-location-marker";
   el.setAttribute("role", "img");
-  el.setAttribute("aria-label", "You are here");
+  el.setAttribute("aria-label", label);
   userMarker = new maplibregl.Marker({ element: el, anchor: "center" })
     .setLngLat([lon, lat])
     .addTo(map);

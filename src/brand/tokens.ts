@@ -34,3 +34,16 @@ export const KIND_GROUPS: Record<string, string[]> = {
   heritage: ["heritage"],
   green: ["green"],
 };
+
+/**
+ * Reverse lookup: the filter group whose membership is exactly `kinds`.
+ * Used to keep the visible filter dropdown in sync when the agent filters.
+ */
+export function kindGroupFor(kinds: string[] | null | undefined): string | null {
+  if (!kinds || !kinds.length) return null;
+  const wanted = new Set(kinds);
+  const hit = Object.entries(KIND_GROUPS).find(
+    ([, list]) => list.length === wanted.size && list.every((k) => wanted.has(k))
+  );
+  return hit ? hit[0] : null;
+}

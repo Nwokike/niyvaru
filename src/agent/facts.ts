@@ -35,7 +35,7 @@ export function areaFacts(pack: AreaPack): string {
   lines.push(`PLACE COUNTS: ${[...counts.entries()].map(([k, n]) => `${n} ${k}`).join(", ") || "none"}`);
 
   const featured = pack.places.slice(0, MAX_PLACES);
-  lines.push(`PLACES (id | name | kind | distance | facts) — these listed ids are ready to use directly in tool calls; reuse them instead of searching again:`);
+  lines.push(`PLACES (id | name | kind | distance | facts) — the ${featured.length} nearest of ${pack.places.length} are listed; reuse these ids directly, and use search_places / nearby for anything not listed:`);
   for (const p of featured) lines.push(placeLine(p));
 
   if (pack.routes.length) {
