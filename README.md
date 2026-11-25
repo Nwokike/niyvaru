@@ -4,6 +4,14 @@ Feel the place before you book it.
 
 Niyvaru is a city-agnostic browser app. It assembles a live, walkable 3D map of any city from free open data, remembers what matters to the traveller on the device, and lets a private concierge drive the map through typed tools.
 
+| Phone — request | Phone — Makkah at golden hour | Desktop — Makkah |
+|---|---|---|
+| ![Request on a phone](docs/screenshots/home-phone.png) | ![Makkah map on a phone](docs/screenshots/map-phone.png) | ![Makkah map on desktop](docs/screenshots/map-desktop.png) |
+
+Screenshots are the live GitHub Pages build: real OpenStreetMap buildings and
+terrain, hour-keyed palette (16:5x golden), assembled places, and the surface
+shell. No mockups.
+
 ## Run it
 
 ```bash
